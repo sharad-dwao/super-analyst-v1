@@ -21,7 +21,10 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 app = FastAPI(
-    title="Adobe Analytics MCP Server", version="1.0.0", docs_url=None, redoc_url=None
+    title="Adobe Analytics MCP Server", 
+    version="1.0.0", 
+    docs_url=None, 
+    redoc_url=None
 )
 
 ALLOWED_ORIGINS = [
@@ -37,23 +40,30 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Environment variables with validation
 CLIENT_ID = os.environ.get("ADOBE_CLIENT_ID")
 CLIENT_SECRET = os.environ.get("ADOBE_CLIENT_SECRET")
 COMPANY_ID = os.environ.get("ADOBE_COMPANY_ID")
 ORG_ID = os.environ.get("ADOBE_ORG_ID")
 REPORTSUIT_ID = os.environ.get("ADOBE_REPORTSUIT_ID")
 
-required_env_vars = [CLIENT_ID, CLIENT_SECRET, COMPANY_ID, ORG_ID, REPORTSUIT_ID]
-if not all(required_env_vars):
-    logger.error("Missing required Adobe Analytics environment variables")
-    raise ValueError("Missing required Adobe Analytics environment variables")
+required_env_vars = {
+    "ADOBE_CLIENT_ID": CLIENT_ID,
+    "ADOBE_CLIENT_SECRET": CLIENT_SECRET,
+    "ADOBE_COMPANY_ID": COMPANY_ID,
+    "ADOBE_ORG_ID": ORG_ID,
+    "ADOBE_REPORTSUIT_ID": REPORTSUIT_ID
+}
 
+missing_vars = [name for name, value in required_env_vars.items() if not value]
+if missing_vars:
+    logger.error(f"Missing required Adobe Analytics environment variables: {missing_vars}")
+    raise ValueError(f"Missing required Adobe Analytics environment variables: {missing_vars}")
 
 class MCPRequest(BaseModel):
     method: str = Field(description="MCP method name")
     params: Dict[str, Any] = Field(description="Method parameters")
     id: Optional[str] = Field(default=None, description="Request ID")
-
 
 class MCPResponse(BaseModel):
     result: Optional[Dict[str, Any]] = Field(
@@ -64,13 +74,12 @@ class MCPResponse(BaseModel):
     )
     id: Optional[str] = Field(default=None, description="Request ID")
 
-
 class MCPTool(BaseModel):
     name: str = Field(description="Tool name")
     description: str = Field(description="Tool description")
     input_schema: Dict[str, Any] = Field(description="JSON schema for tool input")
 
-
+# Comprehensive metrics and dimensions lists
 METRICS = [
     "metrics/visits",
     "metrics/visitors",
@@ -131,8 +140,9 @@ DIMENSIONS = [
     "variables/visitnumber",
 ]
 
+# Token cache with thread safety
 _token_cache = {"token": None, "expires_at": None}
-
+_token_lock = asyncio.Lock()
 
 @app.middleware("http")
 async def security_middleware(request: Request, call_next):
@@ -148,49 +158,53 @@ async def security_middleware(request: Request, call_next):
     response = await call_next(request)
     return response
 
-
 async def get_access_token() -> str:
-    current_time = datetime.now()
+    async with _token_lock:
+        current_time = datetime.now()
 
-    if (
-        _token_cache["token"]
-        and _token_cache["expires_at"]
-        and current_time < _token_cache["expires_at"]
-    ):
-        return _token_cache["token"]
+        if (
+            _token_cache["token"]
+            and _token_cache["expires_at"]
+            and current_time < _token_cache["expires_at"]
+        ):
+            return _token_cache["token"]
 
-    try:
-        url = "https://ims-na1.adobelogin.com/ims/token/v3"
-        payload = (
-            f"grant_type=client_credentials&client_id={CLIENT_ID}"
-            f"&client_secret={CLIENT_SECRET}"
-            "&scope=openid%2CAdobeID%2Cadditional_info.projectedProductContext"
-            "%2Ctarget_sdk%2Cread_organizations%2Cadditional_info.roles"
-        )
-        headers = {"Content-Type": "application/x-www-form-urlencoded"}
+        try:
+            url = "https://ims-na1.adobelogin.com/ims/token/v3"
+            payload = (
+                f"grant_type=client_credentials&client_id={CLIENT_ID}"
+                f"&client_secret={CLIENT_SECRET}"
+                "&scope=openid%2CAdobeID%2Cadditional_info.projectedProductContext"
+                "%2Ctarget_sdk%2Cread_organizations%2Cadditional_info.roles"
+            )
+            headers = {"Content-Type": "application/x-www-form-urlencoded"}
 
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.post(url, headers=headers, data=payload)
-        resp.raise_for_status()
+            async with httpx.AsyncClient(timeout=15) as client:
+                resp = await client.post(url, headers=headers, data=payload)
+            resp.raise_for_status()
 
-        token_data = resp.json()
-        access_token = token_data["access_token"]
-        expires_in = token_data.get("expires_in", 3600)
+            token_data = resp.json()
+            access_token = token_data["access_token"]
+            expires_in = token_data.get("expires_in", 3600)
 
-        _token_cache["token"] = access_token
-        _token_cache["expires_at"] = current_time + timedelta(seconds=expires_in - 300)
+            # Cache token with 5-minute buffer
+            _token_cache["token"] = access_token
+            _token_cache["expires_at"] = current_time + timedelta(seconds=expires_in - 300)
 
-        logger.info("Adobe Analytics access token refreshed")
-        return access_token
+            logger.info("Adobe Analytics access token refreshed")
+            return access_token
 
-    except Exception as e:
-        logger.error(f"Failed to get Adobe Analytics access token: {str(e)}")
-        raise
-
+        except httpx.HTTPStatusError as e:
+            logger.error(f"HTTP error getting Adobe Analytics access token: {e.response.status_code} - {e.response.text}")
+            raise
+        except Exception as e:
+            logger.error(f"Failed to get Adobe Analytics access token: {str(e)}")
+            raise
 
 def validate_metrics_dimensions(
     metrics: List[str], dimensions: List[str]
 ) -> Dict[str, Any]:
+    """Validate and clean metrics and dimensions"""
     valid_metrics = []
     invalid_metrics = []
 
@@ -198,6 +212,7 @@ def validate_metrics_dimensions(
         if metric in METRICS:
             valid_metrics.append(metric)
         else:
+            # Try fuzzy matching
             metric_clean = metric.replace("metrics/", "").lower()
             for valid_metric in METRICS:
                 if metric_clean in valid_metric.lower():
@@ -213,6 +228,7 @@ def validate_metrics_dimensions(
         if dimension in DIMENSIONS:
             valid_dimensions.append(dimension)
         else:
+            # Try fuzzy matching
             dimension_clean = dimension.replace("variables/", "").lower()
             for valid_dimension in DIMENSIONS:
                 if dimension_clean in valid_dimension.lower():
@@ -228,7 +244,6 @@ def validate_metrics_dimensions(
         "invalid_dimensions": invalid_dimensions,
     }
 
-
 async def get_analytics_report(
     metrics: List[str],
     dimensions: List[str],
@@ -236,6 +251,7 @@ async def get_analytics_report(
     end_date: str,
     limit: int = 20,
 ) -> Dict[str, Any]:
+    """Get analytics report from Adobe Analytics API"""
     try:
         validation = validate_metrics_dimensions(metrics, dimensions)
         clean_metrics = validation["valid_metrics"]
@@ -277,6 +293,7 @@ async def get_analytics_report(
             },
         }
 
+        # Add breakdown dimension if available
         if len(clean_dimensions) > 1:
             body["metricContainer"]["metricFilters"] = [
                 {
@@ -292,6 +309,7 @@ async def get_analytics_report(
         logger.info(
             f"Adobe Analytics request: {len(clean_metrics)} metrics, {len(clean_dimensions)} dimensions"
         )
+        
         async with httpx.AsyncClient(timeout=45) as client:
             res = await client.post(url, headers=headers, json=body)
         res.raise_for_status()
@@ -314,8 +332,8 @@ async def get_analytics_report(
     except httpx.HTTPStatusError as err:
         error_details = {
             "success": False,
-            "error": f"Adobe Analytics API error: {err.response.status_code} {err.response.reason}",
-            "details": err.response.text if hasattr(err, "response") else str(err),
+            "error": f"Adobe Analytics API error: {err.response.status_code} {err.response.reason_phrase}",
+            "details": err.response.text if hasattr(err.response, "text") else str(err),
             "error_type": "api_error",
         }
         logger.error(f"Adobe Analytics API error: {error_details}")
@@ -329,47 +347,29 @@ async def get_analytics_report(
         logger.error(f"Unexpected error in get_analytics_report: {error_details}")
         return error_details
 
-
 def parse_time_period(time_period: str, current_date: str) -> tuple[str, str]:
+    """Parse time period string into start and end dates"""
     try:
         current = datetime.fromisoformat(current_date)
     except ValueError:
         logger.warning(f"Invalid current_date format: {current_date}, using today")
         current = datetime.now()
 
+    # Handle specific month format (e.g., "november_2024")
     if "_" in time_period and any(
         month in time_period.lower()
         for month in [
-            "january",
-            "february",
-            "march",
-            "april",
-            "may",
-            "june",
-            "july",
-            "august",
-            "september",
-            "october",
-            "november",
-            "december",
+            "january", "february", "march", "april", "may", "june",
+            "july", "august", "september", "october", "november", "december",
         ]
     ):
         try:
             month_name, year = time_period.lower().split("_")
             year = int(year)
             month_num = {
-                "january": 1,
-                "february": 2,
-                "march": 3,
-                "april": 4,
-                "may": 5,
-                "june": 6,
-                "july": 7,
-                "august": 8,
-                "september": 9,
-                "october": 10,
-                "november": 11,
-                "december": 12,
+                "january": 1, "february": 2, "march": 3, "april": 4,
+                "may": 5, "june": 6, "july": 7, "august": 8,
+                "september": 9, "october": 10, "november": 11, "december": 12,
             }[month_name]
 
             first_day = datetime(year, month_num, 1)
@@ -383,6 +383,7 @@ def parse_time_period(time_period: str, current_date: str) -> tuple[str, str]:
                 f"Could not parse specific month format: {time_period}, error: {e}"
             )
 
+    # Handle relative time periods
     if "current_month" in time_period.lower() or "this month" in time_period.lower():
         first_day = current.replace(day=1)
         last_day = current.replace(
@@ -415,10 +416,11 @@ def parse_time_period(time_period: str, current_date: str) -> tuple[str, str]:
         start_date = end_date - timedelta(days=89)
         return start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d")
     else:
+        # Default to yesterday
         date_obj = current - timedelta(days=1)
         return date_obj.strftime("%Y-%m-%d"), date_obj.strftime("%Y-%m-%d")
 
-
+# Define available MCP tools
 MCP_TOOLS = [
     MCPTool(
         name="get_analytics_report",
@@ -528,9 +530,9 @@ MCP_TOOLS = [
     ),
 ]
 
-
 @app.post("/mcp")
 async def handle_mcp_request(request: MCPRequest) -> MCPResponse:
+    """Handle MCP protocol requests"""
     try:
         logger.info(f"MCP request: {request.method}")
 
@@ -593,6 +595,7 @@ async def handle_mcp_request(request: MCPRequest) -> MCPResponse:
                         id=request.id,
                     )
 
+                # Get both reports
                 primary_result = await get_analytics_report(
                     metrics=arguments["metrics"],
                     dimensions=arguments["dimensions"],
@@ -710,9 +713,9 @@ async def handle_mcp_request(request: MCPRequest) -> MCPResponse:
             id=request.id,
         )
 
-
 @app.get("/health")
 async def health_check():
+    """Health check endpoint"""
     try:
         token = await get_access_token()
         adobe_status = "connected" if token else "disconnected"
@@ -731,18 +734,18 @@ async def health_check():
         "current_datetime": current_datetime.strftime("%Y-%m-%d %H:%M:%S"),
     }
 
-
 @app.get("/tools")
 async def list_tools():
+    """List available tools endpoint"""
     return {
         "tools": [tool.dict() for tool in MCP_TOOLS],
         "server_type": "mcp_adobe_analytics",
         "total_tools": len(MCP_TOOLS),
     }
 
-
 @app.on_event("startup")
 async def startup_event():
+    """Startup event handler"""
     logger.info("Starting Adobe Analytics MCP Server")
 
     try:
@@ -753,8 +756,6 @@ async def startup_event():
 
     logger.info(f"MCP Server started with {len(MCP_TOOLS)} tools available")
 
-
 if __name__ == "__main__":
     import uvicorn
-
     uvicorn.run(app, host="127.0.0.1", port=8001)

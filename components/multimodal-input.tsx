@@ -82,12 +82,12 @@ export function MultimodalInput({
     }
   }, []);
 
-  const adjustHeight = () => {
+  const adjustHeight = useCallback(() => {
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
       textareaRef.current.style.height = `${textareaRef.current.scrollHeight + 2}px`;
     }
-  };
+  }, []);
 
   const [localStorageInput, setLocalStorageInput] = useLocalStorage(
     "input",
@@ -110,19 +110,60 @@ export function MultimodalInput({
     setLocalStorageInput(input);
   }, [input, setLocalStorageInput]);
 
-  const handleInput = (event: React.ChangeEvent<HTMLTextAreaElement>) => {
+  const handleInput = useCallback((event: React.ChangeEvent<HTMLTextAreaElement>) => {
     setInput(event.target.value);
     adjustHeight();
-  };
+  }, [setInput, adjustHeight]);
 
   const submitForm = useCallback(() => {
+    if (!input.trim()) {
+      toast.error("Please enter a message before sending.");
+      return;
+    }
+
     handleSubmit(undefined, {});
     setLocalStorageInput("");
 
     if (width && width > 768) {
       textareaRef.current?.focus();
     }
-  }, [handleSubmit, setLocalStorageInput, width]);
+  }, [handleSubmit, setLocalStorageInput, width, input]);
+
+  const handleKeyDown = useCallback((event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+
+      if (isLoading) {
+        toast.error("Please wait for the model to finish its response!");
+      } else {
+        submitForm();
+      }
+    }
+  }, [isLoading, submitForm]);
+
+  const handleSuggestedAction = useCallback(async (action: string) => {
+    if (isLoading) {
+      toast.error("Please wait for the current response to complete.");
+      return;
+    }
+
+    try {
+      await append({
+        role: "user",
+        content: action,
+      });
+    } catch (error) {
+      toast.error("Failed to send message. Please try again.");
+      console.error("Error sending suggested action:", error);
+    }
+  }, [append, isLoading]);
+
+  const handleStopGeneration = useCallback((event: React.MouseEvent) => {
+    event.preventDefault();
+    stop();
+    setMessages((messages) => sanitizeUIMessages(messages));
+    toast.success("Generation stopped.");
+  }, [stop, setMessages]);
 
   return (
     <div className="relative w-full flex flex-col gap-4">
@@ -146,12 +187,7 @@ export function MultimodalInput({
               >
                 <Button
                   variant="ghost"
-                  onClick={async () => {
-                    append({
-                      role: "user",
-                      content: suggestedAction.action,
-                    });
-                  }}
+                  onClick={() => handleSuggestedAction(suggestedAction.action)}
                   className="text-left border rounded-xl px-4 py-3.5 text-sm flex-1 gap-1 sm:flex-col w-full h-auto justify-start items-start hover:bg-accent/50 transition-colors"
                   disabled={isLoading}
                 >
@@ -184,17 +220,7 @@ export function MultimodalInput({
           )}
           rows={3}
           autoFocus
-          onKeyDown={(event) => {
-            if (event.key === "Enter" && !event.shiftKey) {
-              event.preventDefault();
-
-              if (isLoading) {
-                toast.error("Please wait for the model to finish its response!");
-              } else {
-                submitForm();
-              }
-            }
-          }}
+          onKeyDown={handleKeyDown}
         />
 
         <AnimatePresence mode="wait">
@@ -208,11 +234,8 @@ export function MultimodalInput({
             >
               <Button
                 className="rounded-full p-1.5 h-fit absolute bottom-2 right-2 m-0.5 border border-destructive/20 bg-destructive text-destructive-foreground hover:bg-destructive/90 transition-colors shadow-lg"
-                onClick={(event) => {
-                  event.preventDefault();
-                  stop();
-                  setMessages((messages) => sanitizeUIMessages(messages));
-                }}
+                onClick={handleStopGeneration}
+                aria-label="Stop generation"
               >
                 <StopIcon size={14} />
               </Button>
@@ -227,11 +250,9 @@ export function MultimodalInput({
             >
               <Button
                 className="rounded-full p-1.5 h-fit absolute bottom-2 right-2 m-0.5 border border-primary/20 bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 shadow-lg"
-                onClick={(event) => {
-                  event.preventDefault();
-                  submitForm();
-                }}
-                disabled={input.length === 0}
+                onClick={submitForm}
+                disabled={input.trim().length === 0}
+                aria-label="Send message"
               >
                 <motion.div
                   whileHover={{ scale: 1.1 }}

@@ -4,13 +4,14 @@
   "private": true,
   "scripts": {
     "fastapi-dev": "uvicorn api.index:app --reload",
-    "mcp-server-dev": "python mcp_server\\start_server.py",
+    "mcp-server-dev": "python mcp_server/start_server.py",
     "next-dev": "next dev",
     "dev": "concurrently \"npm run next-dev\" \"npm run fastapi-dev\" \"npm run mcp-server-dev\"",
     "dev-no-mcp": "concurrently \"npm run next-dev\" \"npm run fastapi-dev\"",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "type-check": "tsc --noEmit"
   },
   "dependencies": {
     "@ai-sdk/ui-utils": "^0.0.20",

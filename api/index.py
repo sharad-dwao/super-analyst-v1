@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI()
 
-llm_model = "openai/gpt-4.1-mini"
+llm_model = "openai/gpt-4o-mini"  # Fixed: Changed from non-existent gpt-4.1-mini
 
 client = AsyncOpenAI(
     api_key=os.environ.get("OPENROUTER_API_KEY"),
@@ -33,11 +33,17 @@ client = AsyncOpenAI(
 )
 
 mcp_server_url = os.environ.get("MCP_SERVER_URL", "http://localhost:8001")
-mcp_pipeline = MCPAnalyticsPipeline(
-    openai_api_key=os.environ.get("OPENROUTER_API_KEY"),
-    mcp_server_url=mcp_server_url,
-    base_url="https://openrouter.ai/api/v1"
-)
+
+# Initialize MCP pipeline with proper error handling
+try:
+    mcp_pipeline = MCPAnalyticsPipeline(
+        openai_api_key=os.environ.get("OPENROUTER_API_KEY"),
+        mcp_server_url=mcp_server_url,
+        base_url="https://openrouter.ai/api/v1"
+    )
+except Exception as e:
+    logger.error(f"Failed to initialize MCP pipeline: {str(e)}")
+    mcp_pipeline = None
 
 class Request(BaseModel):
     messages: List[ClientMessage]
@@ -87,6 +93,14 @@ def get_tools_def():
 
 async def analyze_with_mcp(user_query: str) -> dict:
     logger.info(f"Starting MCP analysis for query: {user_query[:100]}...")
+    
+    if not mcp_pipeline:
+        return {
+            "error": "MCP pipeline not initialized",
+            "success": False,
+            "fallback": True
+        }
+    
     try:
         result = await asyncio.wait_for(
             mcp_pipeline.process_query(user_query),
@@ -110,6 +124,15 @@ async def analyze_with_mcp(user_query: str) -> dict:
 
 async def get_mcp_server_status() -> dict:
     logger.info("Checking MCP server status")
+    
+    if not mcp_pipeline:
+        return {
+            "status": "error",
+            "server_url": mcp_server_url,
+            "error": "MCP pipeline not initialized",
+            "tools_available": 0
+        }
+    
     try:
         await mcp_pipeline.initialize()
         status = {
@@ -209,23 +232,32 @@ async def stream_text(messages: List[ChatCompletionMessageParam], protocol: str 
                 logger.error(f"Error processing chunk: {str(chunk_error)}")
                 continue
 
+        # Fixed: Check if chunk has usage attribute before accessing
+        usage_info = {"promptTokens": 0, "completionTokens": 0}
         if hasattr(chunk, 'usage') and chunk.usage:
-            usage = chunk.usage
-            yield (
-                f"e:{{\"finishReason\":\"{('tool-calls' if draft_tool_calls else 'stop')}\","
-                f'"usage":{{"promptTokens":{usage.prompt_tokens},"completionTokens":{usage.completion_tokens}}},'
-                f'"isContinued":false}}\n'
-            )
-        else:
-            yield f"e:{{\"finishReason\":\"{('tool-calls' if draft_tool_calls else 'stop')}\",\"usage\":{{\"promptTokens\":0,\"completionTokens\":0}},\"isContinued\":false}}\n"
+            usage_info = {
+                "promptTokens": chunk.usage.prompt_tokens,
+                "completionTokens": chunk.usage.completion_tokens
+            }
+        
+        yield (
+            f"e:{{\"finishReason\":\"{('tool-calls' if draft_tool_calls else 'stop')}\","
+            f'"usage":{json.dumps(usage_info)},'
+            f'"isContinued":false}}\n'
+        )
             
     except Exception as stream_error:
         logger.error(f"Stream error: {str(stream_error)}")
         yield f"e:{{\"finishReason\":\"error\",\"error\":\"{str(stream_error)}\",\"isContinued\":false}}\n"
 
+# Fixed: Use raw string for Windows path
 PROMPT = None
-with open(r"api\sys_prompt.md") as infile:
-    PROMPT = "".join(infile.readlines())
+try:
+    with open(r"api/sys_prompt.md", encoding="utf-8") as infile:
+        PROMPT = "".join(infile.readlines())
+except FileNotFoundError:
+    logger.warning("System prompt file not found, using fallback")
+    PROMPT = "You are an expert AI assistant specializing in web analytics and data insights."
 
 @app.post("/api/chat")
 async def handle_chat_data(request: Request, protocol: str = Query("data")):
@@ -318,8 +350,11 @@ async def get_mcp_status():
 @app.on_event("startup")
 async def startup_event():
     logger.info("Starting FastAPI application")
-    try:
-        await mcp_pipeline.initialize()
-        logger.info("MCP pipeline initialized successfully")
-    except Exception as e:
-        logger.error(f"Failed to initialize MCP pipeline: {str(e)}")
+    if mcp_pipeline:
+        try:
+            await mcp_pipeline.initialize()
+            logger.info("MCP pipeline initialized successfully")
+        except Exception as e:
+            logger.error(f"Failed to initialize MCP pipeline: {str(e)}")
+    else:
+        logger.warning("MCP pipeline not available")

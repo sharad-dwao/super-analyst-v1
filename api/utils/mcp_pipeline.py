@@ -30,8 +30,9 @@ class AnalyticsResult(BaseModel):
 
 class MCPAnalyticsPipeline:
     def __init__(self, openai_api_key: str, mcp_server_url: str, base_url: str = "https://openrouter.ai/api/v1"):
+        # Fixed: Changed to correct model name
         self.llm = ChatOpenAI(
-            model="openai/gpt-4.1-mini",
+            model="openai/gpt-4o-mini",
             api_key=openai_api_key,
             base_url=base_url,
             temperature=0.1,
