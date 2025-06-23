@@ -66,6 +66,7 @@ def convert_to_openai_messages(
     messages: List[ClientMessage],
 ) -> List[ChatCompletionMessageParam]:
     openai_messages = []
+    tool_call_ids = set()  # Track tool call IDs to validate tool messages
 
     for message in messages:
         parts = []
@@ -86,14 +87,17 @@ def convert_to_openai_messages(
             "content": parts,
         }
 
-        # Only add tool_calls if there are actual CALL state tool invocations
+        # Handle tool invocations
         if message.toolInvocations:
             tool_calls = []
             
             for toolInvocation in message.toolInvocations:
                 if toolInvocation.state == ToolInvocationState.CALL:
+                    tool_call_id = toolInvocation.toolCallId
+                    tool_call_ids.add(tool_call_id)  # Track this tool call ID
+                    
                     tool_calls.append({
-                        "id": toolInvocation.toolCallId,
+                        "id": tool_call_id,
                         "type": "function",
                         "function": {
                             "name": toolInvocation.toolName,
@@ -108,9 +112,10 @@ def convert_to_openai_messages(
             # Add the message
             openai_messages.append(message_dict)
             
-            # Add tool result messages separately
+            # Add tool result messages separately, but only if we have the corresponding tool call
             for toolInvocation in message.toolInvocations:
-                if toolInvocation.state == ToolInvocationState.RESULT:
+                if (toolInvocation.state == ToolInvocationState.RESULT and 
+                    toolInvocation.toolCallId in tool_call_ids):
                     tool_message = {
                         "role": "tool",
                         "tool_call_id": toolInvocation.toolCallId,
