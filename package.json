@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "fastapi-dev": "python -m uvicorn api.index:app --reload",
+    "fastapi-dev": "uvicorn api.index:app --reload",
     "mcp-server-dev": "cd mcp_server && python start_server.py",
     "next-dev": "next dev",
     "dev": "concurrently \"npm run next-dev\" \"npm run fastapi-dev\" \"npm run mcp-server-dev\"",
