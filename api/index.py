@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI()
 
-llm_model = "openai/gpt-4o-mini"  # Fixed: Changed from non-existent gpt-4.1-mini
+llm_model = "openai/gpt-4o-mini"
 
 client = AsyncOpenAI(
     api_key=os.environ.get("OPENROUTER_API_KEY"),
@@ -165,6 +165,11 @@ async def stream_text(
     messages: List[ChatCompletionMessageParam], protocol: str = "data"
 ):
     logger.info(f"Starting stream with {len(messages)} messages")
+    
+    # Debug: Log the messages being sent to OpenAI
+    for i, msg in enumerate(messages):
+        logger.debug(f"Message {i}: role={msg.get('role')}, has_tool_calls={bool(msg.get('tool_calls'))}")
+    
     draft_tool_calls = []
     draft_tool_calls_index = -1
     has_tool_calls = False
@@ -189,10 +194,12 @@ async def stream_text(
                         has_tool_calls = True
                         logger.info(f"Processing {len(draft_tool_calls)} tool calls")
 
+                        # Send tool call notifications
                         for call in draft_tool_calls:
                             logger.info(f"Executing tool: {call['name']}")
                             yield f"9:{{\"toolCallId\":\"{call['id']}\",\"toolName\":\"{call['name']}\",\"args\":{call['arguments']}}}\n"
 
+                        # Execute tools and send results
                         for call in draft_tool_calls:
                             try:
                                 if call["name"] == "analyze_with_mcp":
@@ -206,15 +213,11 @@ async def stream_text(
                                         **arguments
                                     )
 
-                                logger.info(
-                                    f"Tool {call['name']} completed successfully"
-                                )
+                                logger.info(f"Tool {call['name']} completed successfully")
                                 yield f"a:{{\"toolCallId\":\"{call['id']}\",\"toolName\":\"{call['name']}\",\"args\":{call['arguments']},\"result\":{json.dumps(result)}}}\n"
 
                             except Exception as tool_error:
-                                logger.error(
-                                    f"Tool {call['name']} failed: {str(tool_error)}"
-                                )
+                                logger.error(f"Tool {call['name']} failed: {str(tool_error)}")
                                 error_result = {
                                     "error": str(tool_error),
                                     "success": False,
@@ -249,7 +252,7 @@ async def stream_text(
                 logger.error(f"Error processing chunk: {str(chunk_error)}")
                 continue
 
-        # Fixed: Check if chunk has usage attribute before accessing
+        # Get usage info if available
         usage_info = {"promptTokens": 0, "completionTokens": 0}
         if hasattr(chunk, "usage") and chunk.usage:
             usage_info = {
@@ -257,7 +260,7 @@ async def stream_text(
                 "completionTokens": chunk.usage.completion_tokens,
             }
 
-        # Only set finish reason to "tool-calls" if tools were actually called
+        # Set finish reason based on whether tools were actually called
         finish_reason = "tool-calls" if has_tool_calls else "stop"
         
         yield (
@@ -271,7 +274,7 @@ async def stream_text(
         yield f'e:{{"finishReason":"error","error":"{str(stream_error)}","isContinued":false}}\n'
 
 
-# Fixed: Use raw string for Windows path
+# Load system prompt
 PROMPT = None
 try:
     with open(r"api/sys_prompt.md", encoding="utf-8") as infile:
@@ -343,16 +346,12 @@ MCP Server URL: {mcp_server_url}""",
         # Limit message history to prevent context overflow
         max_messages = 20
         if len(openai_messages) > max_messages:
-            logger.info(
-                f"Truncating message history from {len(openai_messages)} to {max_messages}"
-            )
+            logger.info(f"Truncating message history from {len(openai_messages)} to {max_messages}")
             openai_messages = openai_messages[-max_messages:]
 
         openai_messages.insert(0, system_msg)
 
-        logger.info(
-            f"Processing {len(openai_messages)} messages with current date: {datetime_info['current_date']}"
-        )
+        logger.info(f"Processing {len(openai_messages)} messages with current date: {datetime_info['current_date']}")
 
         response = StreamingResponse(
             stream_text(openai_messages, protocol), media_type="text/plain"

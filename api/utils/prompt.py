@@ -69,7 +69,6 @@ def convert_to_openai_messages(
 
     for message in messages:
         parts = []
-        tool_calls = []
 
         parts.append({"type": "text", "text": message.content})
 
@@ -79,46 +78,50 @@ def convert_to_openai_messages(
                     parts.append(
                         {"type": "image_url", "image_url": {"url": attachment.url}}
                     )
-
                 elif attachment.contentType.startswith("text"):
                     parts.append({"type": "text", "text": attachment.url})
 
-        # Only add tool calls if there are actual tool invocations with CALL state
-        if message.toolInvocations:
-            for toolInvocation in message.toolInvocations:
-                if toolInvocation.state == ToolInvocationState.CALL:
-                    tool_calls.append(
-                        {
-                            "id": toolInvocation.toolCallId,
-                            "type": "function",
-                            "function": {
-                                "name": toolInvocation.toolName,
-                                "arguments": json.dumps(toolInvocation.args),
-                            },
-                        }
-                    )
-
-        # Create the message with or without tool_calls
+        # Create the base message
         message_dict = {
             "role": message.role,
             "content": parts,
         }
-        
-        # Only add tool_calls if there are actual tool calls
-        if tool_calls:
-            message_dict["tool_calls"] = tool_calls
 
-        openai_messages.append(message_dict)
-
-        # Only add tool result messages if there are actual tool invocations with RESULT state
+        # Only add tool_calls if there are actual CALL state tool invocations
         if message.toolInvocations:
+            tool_calls = []
+            tool_results = []
+            
             for toolInvocation in message.toolInvocations:
-                if toolInvocation.state == ToolInvocationState.RESULT:
-                    tool_message = {
-                        "role": "tool",
-                        "tool_call_id": toolInvocation.toolCallId,
-                        "content": json.dumps(toolInvocation.result),
-                    }
-                    openai_messages.append(tool_message)
+                if toolInvocation.state == ToolInvocationState.CALL:
+                    tool_calls.append({
+                        "id": toolInvocation.toolCallId,
+                        "type": "function",
+                        "function": {
+                            "name": toolInvocation.toolName,
+                            "arguments": json.dumps(toolInvocation.args),
+                        },
+                    })
+                elif toolInvocation.state == ToolInvocationState.RESULT:
+                    tool_results.append(toolInvocation)
+            
+            # Only add tool_calls if there are actual tool calls
+            if tool_calls:
+                message_dict["tool_calls"] = tool_calls
+            
+            # Add the message first
+            openai_messages.append(message_dict)
+            
+            # Then add tool result messages separately
+            for tool_result in tool_results:
+                tool_message = {
+                    "role": "tool",
+                    "tool_call_id": tool_result.toolCallId,
+                    "content": json.dumps(tool_result.result),
+                }
+                openai_messages.append(tool_message)
+        else:
+            # No tool invocations, just add the regular message
+            openai_messages.append(message_dict)
 
     return openai_messages
