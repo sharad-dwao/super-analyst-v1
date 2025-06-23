@@ -8,7 +8,7 @@ import calendar
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-import requests
+import httpx
 from dotenv import load_dotenv
 
 load_dotenv(".env.local")
@@ -149,7 +149,7 @@ async def security_middleware(request: Request, call_next):
     return response
 
 
-def get_access_token() -> str:
+async def get_access_token() -> str:
     current_time = datetime.now()
 
     if (
@@ -169,7 +169,8 @@ def get_access_token() -> str:
         )
         headers = {"Content-Type": "application/x-www-form-urlencoded"}
 
-        resp = requests.post(url, headers=headers, data=payload, timeout=15)
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.post(url, headers=headers, data=payload)
         resp.raise_for_status()
 
         token_data = resp.json()
@@ -228,7 +229,7 @@ def validate_metrics_dimensions(
     }
 
 
-def get_analytics_report(
+async def get_analytics_report(
     metrics: List[str],
     dimensions: List[str],
     start_date: str,
@@ -249,7 +250,7 @@ def get_analytics_report(
             "x-gw-ims-org-id": ORG_ID,
             "x-proxy-global-company-id": COMPANY_ID,
             "x-api-key": CLIENT_ID,
-            "Authorization": f"Bearer {get_access_token()}",
+            "Authorization": f"Bearer {await get_access_token()}",
         }
 
         metric_entries = []
@@ -291,7 +292,8 @@ def get_analytics_report(
         logger.info(
             f"Adobe Analytics request: {len(clean_metrics)} metrics, {len(clean_dimensions)} dimensions"
         )
-        res = requests.post(url, headers=headers, json=body, timeout=45)
+        async with httpx.AsyncClient(timeout=45) as client:
+            res = await client.post(url, headers=headers, json=body)
         res.raise_for_status()
 
         response_data = res.json()
@@ -309,7 +311,7 @@ def get_analytics_report(
             },
         }
 
-    except requests.exceptions.HTTPError as err:
+    except httpx.HTTPStatusError as err:
         error_details = {
             "success": False,
             "error": f"Adobe Analytics API error: {err.response.status_code} {err.response.reason}",
@@ -555,7 +557,7 @@ async def handle_mcp_request(request: MCPRequest) -> MCPResponse:
                         id=request.id,
                     )
 
-                result = get_analytics_report(
+                result = await get_analytics_report(
                     metrics=arguments["metrics"],
                     dimensions=arguments["dimensions"],
                     start_date=arguments["start_date"],
@@ -591,7 +593,7 @@ async def handle_mcp_request(request: MCPRequest) -> MCPResponse:
                         id=request.id,
                     )
 
-                primary_result = get_analytics_report(
+                primary_result = await get_analytics_report(
                     metrics=arguments["metrics"],
                     dimensions=arguments["dimensions"],
                     start_date=arguments["primary_start"],
@@ -599,7 +601,7 @@ async def handle_mcp_request(request: MCPRequest) -> MCPResponse:
                     limit=arguments.get("limit", 20),
                 )
 
-                comparison_result = get_analytics_report(
+                comparison_result = await get_analytics_report(
                     metrics=arguments["metrics"],
                     dimensions=arguments["dimensions"],
                     start_date=arguments["comparison_start"],
@@ -712,7 +714,7 @@ async def handle_mcp_request(request: MCPRequest) -> MCPResponse:
 @app.get("/health")
 async def health_check():
     try:
-        token = get_access_token()
+        token = await get_access_token()
         adobe_status = "connected" if token else "disconnected"
     except Exception as e:
         adobe_status = f"error: {str(e)}"
@@ -744,7 +746,7 @@ async def startup_event():
     logger.info("Starting Adobe Analytics MCP Server")
 
     try:
-        token = get_access_token()
+        token = await get_access_token()
         logger.info("Adobe Analytics connection validated successfully")
     except Exception as e:
         logger.error(f"Failed to validate Adobe Analytics connection: {str(e)}")

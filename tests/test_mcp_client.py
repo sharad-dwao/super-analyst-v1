@@ -61,31 +61,29 @@ def test_is_internal_url_invalid():
 
 
 def test_async_client_verify_default():
-    client = MCPClient("http://localhost:8000")
     async_client_mock = AsyncMock()
     async_client_mock.aclose = AsyncMock()
 
     async def run():
         with patch("api.utils.mcp_client.httpx.AsyncClient", return_value=async_client_mock) as mock_ac:
-            async with client:
-                pass
+            client = MCPClient("http://localhost:8000")
             kwargs = mock_ac.call_args.kwargs
             assert kwargs["verify"] is True
+            await client.aclose()
 
     asyncio.run(run())
 
 
 def test_async_client_verify_custom_false():
-    client = MCPClient("http://localhost:8000", verify=False)
     async_client_mock = AsyncMock()
     async_client_mock.aclose = AsyncMock()
 
     async def run():
         with patch("api.utils.mcp_client.httpx.AsyncClient", return_value=async_client_mock) as mock_ac:
-            async with client:
-                pass
+            client = MCPClient("http://localhost:8000", verify=False)
             kwargs = mock_ac.call_args.kwargs
             assert kwargs["verify"] is False
+            await client.aclose()
 
     asyncio.run(run())
 
