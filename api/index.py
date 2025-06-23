@@ -166,9 +166,22 @@ async def stream_text(
 ):
     logger.info(f"Starting stream with {len(messages)} messages")
     
-    # Debug: Log the messages being sent to OpenAI
+    # Debug: Log the message structure being sent to OpenAI
     for i, msg in enumerate(messages):
-        logger.debug(f"Message {i}: role={msg.get('role')}, has_tool_calls={bool(msg.get('tool_calls'))}")
+        logger.debug(f"Message {i}: role={msg.get('role')}, has_tool_calls={bool(msg.get('tool_calls'))}, has_tool_call_id={bool(msg.get('tool_call_id'))}")
+    
+    # Validate message structure before sending to OpenAI
+    for i, msg in enumerate(messages):
+        if msg.get("role") == "tool":
+            # Check if there's a preceding message with tool_calls
+            if i == 0:
+                logger.error(f"Tool message at index {i} has no preceding message")
+                raise ValueError("Tool message cannot be the first message")
+            
+            prev_msg = messages[i-1]
+            if not prev_msg.get("tool_calls"):
+                logger.error(f"Tool message at index {i} has no preceding tool_calls in message {i-1}")
+                raise ValueError(f"Tool message at index {i} has no preceding tool_calls")
     
     draft_tool_calls = []
     draft_tool_calls_index = -1
