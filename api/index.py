@@ -146,13 +146,15 @@ async def stream_text(messages: List[ChatCompletionMessageParam], protocol: str 
     draft_tool_calls_index = -1
     
     try:
-        async for chunk in client.chat.completions.create(
+        stream = await client.chat.completions.create(
             messages=messages,
             model=llm_model,
             stream=True,
             tools=get_tools_def(),
             timeout=60.0,
-        ):
+        )
+
+        async for chunk in stream:
             try:
                 for choice in chunk.choices:
                     if choice.finish_reason == "stop":
