@@ -9,13 +9,7 @@ from fastapi import FastAPI, Query
 from fastapi.responses import StreamingResponse
 from openai import OpenAI
 from .utils.prompt import ClientMessage, convert_to_openai_messages
-from .utils.langchain_pipeline import LangChainAnalyticsPipeline
-from .utils.tools import (
-    get_report_adobe_analytics,
-    get_current_date,
-    METRICS,
-    DIMENSIONS,
-)
+from .utils.mcp_pipeline import MCPAnalyticsPipeline
 
 # Load environment variables
 load_dotenv(".env.local")
@@ -39,9 +33,11 @@ client = OpenAI(
     base_url="https://openrouter.ai/api/v1",
 )
 
-# Initialize LangChain Pipeline
-langchain_pipeline = LangChainAnalyticsPipeline(
+# Initialize MCP Pipeline
+mcp_server_url = os.environ.get("MCP_SERVER_URL", "http://localhost:8001")
+mcp_pipeline = MCPAnalyticsPipeline(
     openai_api_key=os.environ.get("OPENROUTER_API_KEY"),
+    mcp_server_url=mcp_server_url,
     base_url="https://openrouter.ai/api/v1"
 )
 
@@ -52,15 +48,14 @@ class Request(BaseModel):
 
 def get_tools_def():
     """
-    Dynamically build the OpenAI function definitions with enums
-    for metrics and dimensions based on current caches.
+    Build OpenAI function definitions for MCP integration
     """
     return [
         {
             "type": "function",
             "function": {
-                "name": "analyze_with_langchain",
-                "description": "Analyze user query using LangChain two-stage pipeline: enhance query then fetch Adobe Analytics data",
+                "name": "analyze_with_mcp",
+                "description": "Analyze user query using MCP (Model Context Protocol) servers for Adobe Analytics data",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -76,27 +71,55 @@ def get_tools_def():
         {
             "type": "function",
             "function": {
-                "name": "get_current_date",
-                "description": "Return the current server date in YYYY-MM-DD format",
+                "name": "get_mcp_server_status",
+                "description": "Check the status and available tools of MCP servers",
                 "parameters": {"type": "object", "properties": {}, "required": []},
             },
         },
     ]
 
 
-async def analyze_with_langchain(user_query: str) -> dict:
+async def analyze_with_mcp(user_query: str) -> dict:
     """
-    Process user query through LangChain two-stage pipeline
+    Process user query through MCP-based pipeline
     """
-    logger.info(f"Processing query with LangChain: {user_query}")
-    result = await langchain_pipeline.process_query(user_query)
+    logger.info(f"Processing query with MCP: {user_query}")
+    result = await mcp_pipeline.process_query(user_query)
     return result
+
+
+async def get_mcp_server_status() -> dict:
+    """
+    Get MCP server status and available tools
+    """
+    try:
+        await mcp_pipeline.initialize()
+        return {
+            "status": "connected",
+            "server_url": mcp_server_url,
+            "tools_available": len(mcp_pipeline.available_tools),
+            "tools": [
+                {
+                    "name": tool.name,
+                    "description": tool.description
+                }
+                for tool in mcp_pipeline.available_tools
+            ]
+        }
+    except Exception as e:
+        logger.error(f"Failed to get MCP server status: {str(e)}")
+        return {
+            "status": "error",
+            "server_url": mcp_server_url,
+            "error": str(e),
+            "tools_available": 0
+        }
 
 
 # Map function names to implementations
 available_tools = {
-    "analyze_with_langchain": analyze_with_langchain,
-    "get_current_date": get_current_date,
+    "analyze_with_mcp": analyze_with_mcp,
+    "get_mcp_server_status": get_mcp_server_status,
 }
 
 
@@ -107,7 +130,7 @@ def stream_text(messages: List[ChatCompletionMessageParam], protocol: str = "dat
     draft_tool_calls = []
     draft_tool_calls_index = -1
 
-    # Create a streaming chat completion with dynamic function schema
+    # Create a streaming chat completion with MCP function schema
     stream = client.chat.completions.create(
         messages=messages,
         model="openai/gpt-4.1-mini",
@@ -126,28 +149,27 @@ def stream_text(messages: List[ChatCompletionMessageParam], protocol: str = "dat
                 # Execute all collected tool calls
                 for call in draft_tool_calls:
                     logger.info(
-                        f"Calling tool {call['name']} with args {call['arguments']}"
+                        f"Calling MCP tool {call['name']} with args {call['arguments']}"
                     )
                     yield f"9:{{\"toolCallId\":\"{call['id']}\",\"toolName\":\"{call['name']}\",\"args\":{call['arguments']}}}\n"
 
                 # Execute tools and yield results with streaming support
                 import asyncio
                 for call in draft_tool_calls:
-                    if call["name"] == "analyze_with_langchain":
-                        # Handle async function with streaming
-                        result = asyncio.run(analyze_with_langchain_streaming(
+                    if call["name"] == "analyze_with_mcp":
+                        # Handle async MCP function with streaming
+                        result = asyncio.run(analyze_with_mcp_streaming(
                             call["arguments"], call["id"]
                         ))
                         # The streaming is handled inside the function
-                        # Just yield the final result marker
                         yield f"a:{{\"toolCallId\":\"{call['id']}\",\"toolName\":\"{call['name']}\",\"args\":{call['arguments']},\"result\":{json.dumps(result)}}}\n"
                     else:
-                        # Handle sync function
-                        result = available_tools[call["name"]](
+                        # Handle other async functions
+                        result = asyncio.run(available_tools[call["name"]](
                             **json.loads(call["arguments"])
-                        )
+                        ))
                         
-                        logger.info(f"Tool {call['name']} result: {result}")
+                        logger.info(f"MCP tool {call['name']} result: {result}")
                         yield f"a:{{\"toolCallId\":\"{call['id']}\",\"toolName\":\"{call['name']}\",\"args\":{call['arguments']},\"result\":{json.dumps(result)}}}\n"
 
             # Collect tool call arguments
@@ -179,38 +201,38 @@ def stream_text(messages: List[ChatCompletionMessageParam], protocol: str = "dat
             )
 
 
-async def analyze_with_langchain_streaming(arguments_str: str, tool_call_id: str):
+async def analyze_with_mcp_streaming(arguments_str: str, tool_call_id: str):
     """
-    Process LangChain analysis with streaming support
+    Process MCP analysis with streaming support
     """
     try:
         arguments = json.loads(arguments_str)
         user_query = arguments.get("user_query", "")
         
-        logger.info(f"Starting streaming analysis for: {user_query}")
+        logger.info(f"Starting MCP streaming analysis for: {user_query}")
         
         # Stage 1: Query Enhancement (quick, no streaming needed)
-        enhanced_query_data = await langchain_pipeline._enhance_query(user_query)
+        enhanced_query_data = await mcp_pipeline._enhance_query(user_query)
         
         # Stream stage 1 completion
         stage1_text = f"**Stage 1 Complete:** Enhanced query - {enhanced_query_data.enhanced_query}\n\n"
         yield_stream_text(stage1_text)
         
-        # Stage 2: Data Retrieval
-        stage2_text = "**Stage 2:** Retrieving analytics data...\n\n"
+        # Stage 2: MCP Data Retrieval
+        stage2_text = "**Stage 2:** Retrieving analytics data via MCP server...\n\n"
         yield_stream_text(stage2_text)
         
-        raw_data = await langchain_pipeline._get_analytics_data(enhanced_query_data)
+        raw_data = await mcp_pipeline._get_analytics_data_mcp(enhanced_query_data)
         
-        stage2_complete = "**Stage 2 Complete:** Data retrieved successfully\n\n"
+        stage2_complete = "**Stage 2 Complete:** Data retrieved successfully from MCP server\n\n"
         yield_stream_text(stage2_complete)
         
         # Stage 3: Analysis with streaming
         stage3_text = "**Stage 3:** Analyzing data and generating insights...\n\n"
         yield_stream_text(stage3_text)
         
-        # Get the analysis result with streaming
-        final_result = await langchain_pipeline._analyze_data_streaming(enhanced_query_data, raw_data)
+        # Get the analysis result
+        final_result = await mcp_pipeline._analyze_data(enhanced_query_data, raw_data)
         
         # Return the complete result
         return {
@@ -218,28 +240,31 @@ async def analyze_with_langchain_streaming(arguments_str: str, tool_call_id: str
             "stage_2_raw_data": raw_data,
             "stage_3_analysis": final_result.dict() if hasattr(final_result, 'dict') else final_result,
             "success": True,
-            "schema_info": {
-                "total_metrics_available": len(METRICS),
-                "total_dimensions_available": len(DIMENSIONS),
-                "schema_source": "predefined_adobe_analytics_schema"
+            "mcp_info": {
+                "server_url": mcp_server_url,
+                "tools_available": len(mcp_pipeline.available_tools),
+                "pipeline_type": "mcp_based"
             }
         }
         
     except Exception as e:
-        logger.error(f"Error in streaming analysis: {str(e)}")
+        logger.error(f"Error in MCP streaming analysis: {str(e)}")
         error_text = f"**Error:** {str(e)}\n\n"
         yield_stream_text(error_text)
         return {
             "error": str(e),
-            "success": False
+            "success": False,
+            "mcp_info": {
+                "server_url": mcp_server_url,
+                "pipeline_type": "mcp_based"
+            }
         }
 
 
 def yield_stream_text(text: str):
     """Helper function to yield streaming text"""
-    import sys
     # This is a placeholder - in the actual implementation,
-    # we'll need to modify the LangChain pipeline to support streaming
+    # we'll need to modify the MCP pipeline to support streaming
     pass
 
 
@@ -252,28 +277,44 @@ with open(r"api\sys_prompt.md") as infile:
 @app.post("/api/chat")
 async def handle_chat_data(request: Request, protocol: str = Query("data")):
     """
-    Endpoint to handle incoming chat messages and stream responses.
+    Endpoint to handle incoming chat messages and stream responses using MCP servers.
     """
-    # System message for analytics context
+    # System message for analytics context with MCP integration
     system_msg = {
         "role": "system",
         "content": f"""{PROMPT}
 
-You now have access to a powerful two-stage LangChain pipeline for analytics queries:
+You now have access to a powerful MCP (Model Context Protocol) based analytics system:
 
-1. **Stage 1 - Query Enhancement**: The system will automatically enhance and clarify user queries, identifying relevant metrics, dimensions, and time periods.
+## MCP Integration Benefits:
+- **Modular Architecture**: Analytics tools are deployed as separate MCP servers
+- **Independent Updates**: MCP servers can be updated without affecting the main application
+- **Scalable**: Multiple MCP servers can handle different analytics functions
+- **Reliable**: Fault-tolerant communication with MCP servers
 
-2. **Stage 2 - Data Analysis**: After retrieving data from Adobe Analytics, the system provides structured insights, key findings, and actionable recommendations.
+## Available MCP Functions:
+1. **analyze_with_mcp**: Comprehensive analytics analysis using MCP servers
+   - Enhances user queries for better analysis
+   - Retrieves data from Adobe Analytics via MCP servers
+   - Provides structured insights and recommendations
+   - Handles both single-period and comparison analyses
 
-When users ask analytics questions, use the `analyze_with_langchain` function which will:
-- Enhance their query for better analysis
-- Fetch relevant data from Adobe Analytics  
-- Provide structured insights and recommendations
-- Return both raw data and business-friendly analysis
+2. **get_mcp_server_status**: Check MCP server health and available tools
 
-The pipeline handles complex analytics queries and provides comprehensive insights beyond simple data retrieval.
+## MCP Pipeline Stages:
+1. **Stage 1 - Query Enhancement**: Clarifies and structures user queries
+2. **Stage 2 - MCP Data Retrieval**: Fetches data via MCP servers
+3. **Stage 3 - Analysis**: Generates insights and recommendations
 
-IMPORTANT: The analysis results will be streamed in real-time to provide immediate feedback to users. Present the results in a clear, structured format that builds progressively.""",
+When users ask analytics questions, use the `analyze_with_mcp` function which will:
+- Process queries through MCP servers for better reliability
+- Handle complex analytics operations independently
+- Provide comprehensive insights with proper error handling
+- Support real-time streaming of analysis progress
+
+IMPORTANT: The MCP-based analysis results will be streamed in real-time to provide immediate feedback. Present results in a clear, structured format that builds progressively.
+
+MCP Server URL: {mcp_server_url}""",
     }
 
     messages = request.messages
@@ -285,3 +326,21 @@ IMPORTANT: The analysis results will be streamed in real-time to provide immedia
     response = StreamingResponse(stream_text(openai_messages, protocol))
     response.headers["x-vercel-ai-data-stream"] = "v1"
     return response
+
+
+@app.get("/api/mcp/status")
+async def get_mcp_status():
+    """
+    Endpoint to check MCP server status
+    """
+    return await get_mcp_server_status()
+
+
+@app.on_event("startup")
+async def startup_event():
+    """Initialize MCP pipeline on startup"""
+    try:
+        await mcp_pipeline.initialize()
+        logger.info("MCP pipeline initialized successfully")
+    except Exception as e:
+        logger.error(f"Failed to initialize MCP pipeline: {str(e)}")
