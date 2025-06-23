@@ -32,7 +32,11 @@ class MCPClient:
         self.server_url = server_url.rstrip('/')
         self.timeout = timeout
         self.verify = verify
-        self.session = None
+        self.session = httpx.AsyncClient(
+            timeout=httpx.Timeout(self.timeout, connect=10.0),
+            verify=self.verify,
+            limits=httpx.Limits(max_keepalive_connections=5, max_connections=10),
+        )
         
     def _is_internal_url(self, url: str) -> bool:
         allowed_hosts = {"localhost", "127.0.0.1", "::1"}
@@ -45,16 +49,15 @@ class MCPClient:
         return host in allowed_hosts if host else False
         
     async def __aenter__(self):
-        self.session = httpx.AsyncClient(
-            timeout=httpx.Timeout(self.timeout, connect=10.0),
-            verify=self.verify,
-            limits=httpx.Limits(max_keepalive_connections=5, max_connections=10)
-        )
         return self
         
     async def __aexit__(self, exc_type, exc_val, exc_tb):
+        await self.aclose()
+
+    async def aclose(self):
         if self.session:
             await self.session.aclose()
+            self.session = None
     
     async def list_tools(self) -> List[MCPTool]:
         try:
@@ -162,6 +165,9 @@ class AdobeAnalyticsMCPClient:
     def __init__(self, server_url: str):
         self.server_url = server_url
         self.client = MCPClient(server_url)
+
+    async def aclose(self):
+        await self.client.aclose()
     
     async def get_analytics_report(
         self,
@@ -171,17 +177,16 @@ class AdobeAnalyticsMCPClient:
         end_date: str,
         limit: int = 20
     ) -> Dict[str, Any]:
-        async with self.client as mcp:
-            return await mcp.call_tool(
-                "get_analytics_report",
-                {
-                    "metrics": metrics,
-                    "dimensions": dimensions,
-                    "start_date": start_date,
-                    "end_date": end_date,
-                    "limit": limit
-                }
-            )
+        return await self.client.call_tool(
+            "get_analytics_report",
+            {
+                "metrics": metrics,
+                "dimensions": dimensions,
+                "start_date": start_date,
+                "end_date": end_date,
+                "limit": limit,
+            },
+        )
     
     async def get_comparison_report(
         self,
@@ -193,41 +198,37 @@ class AdobeAnalyticsMCPClient:
         comparison_end: str,
         limit: int = 20
     ) -> Dict[str, Any]:
-        async with self.client as mcp:
-            return await mcp.call_tool(
-                "get_comparison_report",
-                {
-                    "metrics": metrics,
-                    "dimensions": dimensions,
-                    "primary_start": primary_start,
-                    "primary_end": primary_end,
-                    "comparison_start": comparison_start,
-                    "comparison_end": comparison_end,
-                    "limit": limit
-                }
-            )
+        return await self.client.call_tool(
+            "get_comparison_report",
+            {
+                "metrics": metrics,
+                "dimensions": dimensions,
+                "primary_start": primary_start,
+                "primary_end": primary_end,
+                "comparison_start": comparison_start,
+                "comparison_end": comparison_end,
+                "limit": limit,
+            },
+        )
     
     async def validate_schema(
         self,
         metrics: List[str],
         dimensions: List[str]
     ) -> Dict[str, Any]:
-        async with self.client as mcp:
-            return await mcp.call_tool(
-                "validate_schema",
-                {
-                    "metrics": metrics,
-                    "dimensions": dimensions
-                }
-            )
+        return await self.client.call_tool(
+            "validate_schema",
+            {
+                "metrics": metrics,
+                "dimensions": dimensions,
+            },
+        )
     
     async def get_current_date(self) -> Dict[str, Any]:
-        async with self.client as mcp:
-            return await mcp.call_tool("get_current_date", {})
+        return await self.client.call_tool("get_current_date", {})
     
     async def list_available_tools(self) -> List[MCPTool]:
-        async with self.client as mcp:
-            return await mcp.list_tools()
+        return await self.client.list_tools()
     
     async def health_check(self) -> Dict[str, Any]:
         try:
