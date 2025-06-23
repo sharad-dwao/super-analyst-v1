@@ -167,6 +167,7 @@ async def stream_text(
     logger.info(f"Starting stream with {len(messages)} messages")
     draft_tool_calls = []
     draft_tool_calls_index = -1
+    has_tool_calls = False
 
     try:
         stream = await client.chat.completions.create(
@@ -185,6 +186,7 @@ async def stream_text(
                         continue
 
                     elif choice.finish_reason == "tool_calls":
+                        has_tool_calls = True
                         logger.info(f"Processing {len(draft_tool_calls)} tool calls")
 
                         for call in draft_tool_calls:
@@ -221,6 +223,7 @@ async def stream_text(
                                 yield f"a:{{\"toolCallId\":\"{call['id']}\",\"toolName\":\"{call['name']}\",\"args\":{call['arguments']},\"result\":{json.dumps(error_result)}}}\n"
 
                     elif choice.delta.tool_calls:
+                        has_tool_calls = True
                         for tc in choice.delta.tool_calls:
                             if tc.id is not None:
                                 draft_tool_calls_index += 1
@@ -254,8 +257,11 @@ async def stream_text(
                 "completionTokens": chunk.usage.completion_tokens,
             }
 
+        # Only set finish reason to "tool-calls" if tools were actually called
+        finish_reason = "tool-calls" if has_tool_calls else "stop"
+        
         yield (
-            f"e:{{\"finishReason\":\"{('tool-calls' if draft_tool_calls else 'stop')}\","
+            f"e:{{\"finishReason\":\"{finish_reason}\","
             f'"usage":{json.dumps(usage_info)},'
             f'"isContinued":false}}\n'
         )
