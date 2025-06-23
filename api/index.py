@@ -140,7 +140,7 @@ available_tools = {
     "get_mcp_server_status": get_mcp_server_status,
 }
 
-def stream_text(messages: List[ChatCompletionMessageParam], protocol: str = "data"):
+async def stream_text(messages: List[ChatCompletionMessageParam], protocol: str = "data"):
     logger.info(f"Starting stream with {len(messages)} messages")
     draft_tool_calls = []
     draft_tool_calls_index = -1
@@ -168,36 +168,26 @@ def stream_text(messages: List[ChatCompletionMessageParam], protocol: str = "dat
                             logger.info(f"Executing tool: {call['name']}")
                             yield f"9:{{\"toolCallId\":\"{call['id']}\",\"toolName\":\"{call['name']}\",\"args\":{call['arguments']}}}\n"
 
-                        loop = asyncio.new_event_loop()
-                        asyncio.set_event_loop(loop)
-                        
-                        try:
-                            for call in draft_tool_calls:
-                                try:
-                                    if call["name"] == "analyze_with_mcp":
-                                        arguments = json.loads(call["arguments"])
-                                        result = loop.run_until_complete(
-                                            analyze_with_mcp(arguments.get("user_query", ""))
-                                        )
-                                    else:
-                                        arguments = json.loads(call["arguments"])
-                                        result = loop.run_until_complete(
-                                            available_tools[call["name"]](**arguments)
-                                        )
-                                    
-                                    logger.info(f"Tool {call['name']} completed successfully")
-                                    yield f"a:{{\"toolCallId\":\"{call['id']}\",\"toolName\":\"{call['name']}\",\"args\":{call['arguments']},\"result\":{json.dumps(result)}}}\n"
-                                    
-                                except Exception as tool_error:
-                                    logger.error(f"Tool {call['name']} failed: {str(tool_error)}")
-                                    error_result = {
-                                        "error": str(tool_error),
-                                        "success": False,
-                                        "tool_name": call['name']
-                                    }
-                                    yield f"a:{{\"toolCallId\":\"{call['id']}\",\"toolName\":\"{call['name']}\",\"args\":{call['arguments']},\"result\":{json.dumps(error_result)}}}\n"
-                        finally:
-                            loop.close()
+                        for call in draft_tool_calls:
+                            try:
+                                if call["name"] == "analyze_with_mcp":
+                                    arguments = json.loads(call["arguments"])
+                                    result = await analyze_with_mcp(arguments.get("user_query", ""))
+                                else:
+                                    arguments = json.loads(call["arguments"])
+                                    result = await available_tools[call["name"]](**arguments)
+
+                                logger.info(f"Tool {call['name']} completed successfully")
+                                yield f"a:{{\"toolCallId\":\"{call['id']}\",\"toolName\":\"{call['name']}\",\"args\":{call['arguments']},\"result\":{json.dumps(result)}}}\n"
+
+                            except Exception as tool_error:
+                                logger.error(f"Tool {call['name']} failed: {str(tool_error)}")
+                                error_result = {
+                                    "error": str(tool_error),
+                                    "success": False,
+                                    "tool_name": call['name']
+                                }
+                                yield f"a:{{\"toolCallId\":\"{call['id']}\",\"toolName\":\"{call['name']}\",\"args\":{call['arguments']},\"result\":{json.dumps(error_result)}}}\n"
 
                     elif choice.delta.tool_calls:
                         for tc in choice.delta.tool_calls:
