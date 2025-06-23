@@ -1,8 +1,3 @@
-"""
-MCP Client for Adobe Analytics
-SECURITY: Only communicates with internal MCP servers
-"""
-
 import json
 import logging
 import asyncio
@@ -10,35 +5,24 @@ from typing import Dict, Any, List, Optional
 import httpx
 from pydantic import BaseModel, Field
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
 logger = logging.getLogger(__name__)
-
 
 class MCPRequest(BaseModel):
     method: str = Field(description="MCP method name")
     params: Dict[str, Any] = Field(description="Method parameters")
     id: Optional[str] = Field(default=None, description="Request ID")
 
-
 class MCPResponse(BaseModel):
     result: Optional[Dict[str, Any]] = Field(default=None, description="Response result")
     error: Optional[Dict[str, Any]] = Field(default=None, description="Error information")
     id: Optional[str] = Field(default=None, description="Request ID")
-
 
 class MCPTool(BaseModel):
     name: str = Field(description="Tool name")
     description: str = Field(description="Tool description")
     input_schema: Dict[str, Any] = Field(description="JSON schema for tool input")
 
-
 class MCPClient:
-    """Client for communicating with MCP servers"""
-    
     def __init__(self, server_url: str, timeout: int = 30):
         if not self._is_internal_url(server_url):
             raise ValueError(f"MCP server URL must be internal: {server_url}")
@@ -48,14 +32,14 @@ class MCPClient:
         self.session = None
         
     def _is_internal_url(self, url: str) -> bool:
-        """Validate that URL is internal/localhost only"""
         internal_hosts = ["localhost", "127.0.0.1", "::1"]
         return any(host in url for host in internal_hosts)
         
     async def __aenter__(self):
         self.session = httpx.AsyncClient(
-            timeout=self.timeout,
-            verify=False
+            timeout=httpx.Timeout(self.timeout, connect=10.0),
+            verify=False,
+            limits=httpx.Limits(max_keepalive_connections=5, max_connections=10)
         )
         return self
         
@@ -64,7 +48,6 @@ class MCPClient:
             await self.session.aclose()
     
     async def list_tools(self) -> List[MCPTool]:
-        """List available tools from MCP server"""
         try:
             request = MCPRequest(
                 method="tools/list",
@@ -93,7 +76,6 @@ class MCPClient:
             return []
     
     async def call_tool(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
-        """Call a specific tool on the MCP server"""
         try:
             request = MCPRequest(
                 method="tools/call",
@@ -104,7 +86,7 @@ class MCPClient:
                 id=f"call_{tool_name}"
             )
             
-            logger.info(f"Calling MCP tool: {tool_name} with args: {arguments}")
+            logger.info(f"Calling MCP tool: {tool_name}")
             response = await self._send_request(request)
             
             if response.error:
@@ -142,11 +124,10 @@ class MCPClient:
             }
     
     async def _send_request(self, request: MCPRequest) -> MCPResponse:
-        """Send request to MCP server with retry logic"""
         if not self.session:
             raise RuntimeError("MCP client session not initialized")
         
-        max_retries = 3
+        max_retries = 2
         for attempt in range(max_retries):
             try:
                 response = await self.session.post(
@@ -168,10 +149,7 @@ class MCPClient:
                 logger.error(f"Error communicating with MCP server: {str(e)}")
                 raise
 
-
 class AdobeAnalyticsMCPClient:
-    """Specialized MCP client for Adobe Analytics operations"""
-    
     def __init__(self, server_url: str):
         self.server_url = server_url
         self.client = MCPClient(server_url)
@@ -184,7 +162,6 @@ class AdobeAnalyticsMCPClient:
         end_date: str,
         limit: int = 20
     ) -> Dict[str, Any]:
-        """Get analytics report via MCP server"""
         async with self.client as mcp:
             return await mcp.call_tool(
                 "get_analytics_report",
@@ -207,7 +184,6 @@ class AdobeAnalyticsMCPClient:
         comparison_end: str,
         limit: int = 20
     ) -> Dict[str, Any]:
-        """Get comparison report via MCP server"""
         async with self.client as mcp:
             return await mcp.call_tool(
                 "get_comparison_report",
@@ -227,7 +203,6 @@ class AdobeAnalyticsMCPClient:
         metrics: List[str],
         dimensions: List[str]
     ) -> Dict[str, Any]:
-        """Validate metrics and dimensions via MCP server"""
         async with self.client as mcp:
             return await mcp.call_tool(
                 "validate_schema",
@@ -238,17 +213,14 @@ class AdobeAnalyticsMCPClient:
             )
     
     async def get_current_date(self) -> Dict[str, Any]:
-        """Get current date via MCP server"""
         async with self.client as mcp:
             return await mcp.call_tool("get_current_date", {})
     
     async def list_available_tools(self) -> List[MCPTool]:
-        """List all available analytics tools"""
         async with self.client as mcp:
             return await mcp.list_tools()
     
     async def health_check(self) -> Dict[str, Any]:
-        """Check MCP server health"""
         try:
             async with httpx.AsyncClient(timeout=10) as client:
                 response = await client.get(f"{self.server_url}/health")

@@ -1,24 +1,14 @@
-"""
-MCP-based Analytics Pipeline
-SECURITY: Only communicates with internal MCP servers
-"""
-
 import json
 import logging
 import os
+import asyncio
 from typing import Dict, Any, List
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 from .mcp_client import AdobeAnalyticsMCPClient, MCPTool
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
 logger = logging.getLogger(__name__)
-
 
 class AnalyticsQuery(BaseModel):
     enhanced_query: str = Field(description="Enhanced and clarified user query")
@@ -30,7 +20,6 @@ class AnalyticsQuery(BaseModel):
     output_format: str = Field(description="Preferred output format", default="detailed")
     additional_context: str = Field(description="Additional context or requirements")
 
-
 class AnalyticsResult(BaseModel):
     summary: str = Field(description="Executive summary of findings")
     key_insights: List[str] = Field(description="List of key insights")
@@ -38,17 +27,16 @@ class AnalyticsResult(BaseModel):
     recommendations: List[str] = Field(description="Actionable recommendations")
     raw_data: Dict[str, Any] = Field(description="Raw data from analytics")
 
-
 class MCPAnalyticsPipeline:
-    """Analytics pipeline using MCP servers"""
-    
     def __init__(self, openai_api_key: str, mcp_server_url: str, base_url: str = "https://openrouter.ai/api/v1"):
         self.llm = ChatOpenAI(
             model="openai/gpt-4.1-mini",
             api_key=openai_api_key,
             base_url=base_url,
             temperature=0.1,
-            streaming=True
+            streaming=False,  # Disable streaming for internal LLM calls
+            timeout=60.0,
+            max_retries=2,
         )
         
         if not self._is_internal_url(mcp_server_url):
@@ -57,31 +45,47 @@ class MCPAnalyticsPipeline:
         self.mcp_client = AdobeAnalyticsMCPClient(mcp_server_url)
         self.available_tools = []
         self.mcp_server_url = mcp_server_url
+        self._initialization_lock = asyncio.Lock()
+        self._initialized = False
         
     def _is_internal_url(self, url: str) -> bool:
-        """Validate that URL is internal/localhost only"""
         internal_hosts = ["localhost", "127.0.0.1", "::1"]
         return any(host in url for host in internal_hosts)
         
     async def initialize(self):
-        """Initialize the pipeline and discover available tools"""
-        try:
-            health = await self.mcp_client.health_check()
-            if health.get("status") != "healthy":
-                logger.warning(f"MCP server health check failed: {health}")
-            
-            self.available_tools = await self.mcp_client.list_available_tools()
-            logger.info(f"Initialized MCP pipeline with {len(self.available_tools)} tools")
-            
-            if not self.available_tools:
-                logger.warning("No tools discovered from MCP server")
+        async with self._initialization_lock:
+            if self._initialized:
+                return
                 
-        except Exception as e:
-            logger.error(f"Failed to initialize MCP pipeline: {str(e)}")
-            self.available_tools = []
+            try:
+                logger.info("Initializing MCP pipeline")
+                health = await asyncio.wait_for(
+                    self.mcp_client.health_check(),
+                    timeout=10.0
+                )
+                
+                if health.get("status") != "healthy":
+                    logger.warning(f"MCP server health check failed: {health}")
+                
+                self.available_tools = await asyncio.wait_for(
+                    self.mcp_client.list_available_tools(),
+                    timeout=15.0
+                )
+                
+                logger.info(f"MCP pipeline initialized with {len(self.available_tools)} tools")
+                self._initialized = True
+                
+                if not self.available_tools:
+                    logger.warning("No tools discovered from MCP server")
+                    
+            except asyncio.TimeoutError:
+                logger.error("MCP pipeline initialization timed out")
+                self.available_tools = []
+            except Exception as e:
+                logger.error(f"Failed to initialize MCP pipeline: {str(e)}")
+                self.available_tools = []
     
     def _get_enhancement_system_prompt(self) -> str:
-        """Get system prompt for query enhancement with MCP tool context"""
         tools_info = ""
         for tool in self.available_tools:
             tools_info += f"- {tool.name}: {tool.description}\n"
@@ -166,7 +170,6 @@ You must respond with a valid JSON object with these exact fields:
 Respond with valid JSON only, no additional text or formatting."""
 
     def _get_analysis_system_prompt(self) -> str:
-        """Get system prompt for data analysis"""
         return """You are an expert data analyst specializing in web analytics using MCP servers. Your job is to analyze Adobe Analytics data and provide actionable insights in the format preferred by the user.
 
 ## OUTPUT FORMAT GUIDELINES:
@@ -249,22 +252,31 @@ You must respond with a valid JSON object with these exact fields:
 Respond with valid JSON only, no additional text or formatting."""
 
     async def process_query(self, user_query: str) -> Dict[str, Any]:
-        """Process user query through the MCP-based pipeline"""
+        logger.info(f"Processing query: {user_query[:100]}...")
+        
         try:
-            logger.info(f"Starting MCP-based analysis for query: {user_query}")
-            
-            if not self.available_tools:
+            if not self._initialized:
                 await self.initialize()
             
-            logger.info("Stage 1: Enhancing query...")
-            enhanced_query_data = await self._enhance_query(user_query)
+            logger.info("Stage 1: Enhancing query")
+            enhanced_query_data = await asyncio.wait_for(
+                self._enhance_query(user_query),
+                timeout=30.0
+            )
             
-            logger.info("Stage 2: Retrieving analytics data via MCP...")
-            raw_data = await self._get_analytics_data_mcp(enhanced_query_data)
+            logger.info("Stage 2: Retrieving analytics data via MCP")
+            raw_data = await asyncio.wait_for(
+                self._get_analytics_data_mcp(enhanced_query_data),
+                timeout=60.0
+            )
             
-            logger.info("Stage 3: Analyzing data and generating insights...")
-            final_result = await self._analyze_data(enhanced_query_data, raw_data)
+            logger.info("Stage 3: Analyzing data and generating insights")
+            final_result = await asyncio.wait_for(
+                self._analyze_data(enhanced_query_data, raw_data),
+                timeout=30.0
+            )
             
+            logger.info("Query processing completed successfully")
             return {
                 "stage_1_enhancement": enhanced_query_data.dict() if hasattr(enhanced_query_data, 'dict') else enhanced_query_data,
                 "stage_2_raw_data": raw_data,
@@ -278,6 +290,18 @@ Respond with valid JSON only, no additional text or formatting."""
                 }
             }
             
+        except asyncio.TimeoutError:
+            logger.error("Query processing timed out")
+            return {
+                "error": "Query processing timed out",
+                "success": False,
+                "timeout": True,
+                "mcp_info": {
+                    "server_url": self.mcp_server_url,
+                    "tools_available": len(self.available_tools),
+                    "server_type": "mcp_adobe_analytics"
+                }
+            }
         except Exception as e:
             logger.error(f"Error in MCP pipeline: {str(e)}")
             return {
@@ -291,7 +315,6 @@ Respond with valid JSON only, no additional text or formatting."""
             }
 
     async def _enhance_query(self, user_query: str) -> AnalyticsQuery:
-        """Stage 1: Enhance the user query"""
         try:
             prompt = ChatPromptTemplate.from_messages([
                 ("system", self._get_enhancement_system_prompt()),
@@ -302,10 +325,9 @@ Respond with valid JSON only, no additional text or formatting."""
             response = await chain.ainvoke({"user_query": user_query})
             
             content = response.content.strip()
-            logger.info(f"Enhancement response: {content}")
+            logger.debug(f"Enhancement response length: {len(content)}")
             
             result_dict = self._extract_json_from_response(content)
-            
             result_dict = self._validate_enhancement_result(result_dict)
             
             return AnalyticsQuery(**result_dict)
@@ -324,7 +346,6 @@ Respond with valid JSON only, no additional text or formatting."""
             )
 
     def _validate_enhancement_result(self, result_dict: Dict) -> Dict:
-        """Validate and clean enhancement result"""
         required_fields = ["enhanced_query", "intent", "metrics", "dimensions", "time_period", "output_format"]
         for field in required_fields:
             if field not in result_dict:
@@ -357,18 +378,21 @@ Respond with valid JSON only, no additional text or formatting."""
         return result_dict
 
     async def _get_analytics_data_mcp(self, enhanced_query: AnalyticsQuery) -> Dict[str, Any]:
-        """Stage 2: Retrieve data via MCP servers"""
         try:
-            date_result = await self.mcp_client.get_current_date()
+            date_result = await asyncio.wait_for(
+                self.mcp_client.get_current_date(),
+                timeout=10.0
+            )
+            
             if not date_result.get("success"):
                 logger.warning("Failed to get current date from MCP server")
                 current_date = "2024-11-20"
             else:
                 current_date = date_result.get("date", "2024-11-20")
             
-            validation_result = await self.mcp_client.validate_schema(
-                enhanced_query.metrics,
-                enhanced_query.dimensions
+            validation_result = await asyncio.wait_for(
+                self.mcp_client.validate_schema(enhanced_query.metrics, enhanced_query.dimensions),
+                timeout=15.0
             )
             
             if not validation_result.get("success"):
@@ -380,13 +404,16 @@ Respond with valid JSON only, no additional text or formatting."""
                 
                 logger.info(f"MCP comparison query - Primary: {primary_start} to {primary_end}, Comparison: {comparison_start} to {comparison_end}")
                 
-                result = await self.mcp_client.get_comparison_report(
-                    metrics=enhanced_query.metrics,
-                    dimensions=enhanced_query.dimensions,
-                    primary_start=primary_start,
-                    primary_end=primary_end,
-                    comparison_start=comparison_start,
-                    comparison_end=comparison_end
+                result = await asyncio.wait_for(
+                    self.mcp_client.get_comparison_report(
+                        metrics=enhanced_query.metrics,
+                        dimensions=enhanced_query.dimensions,
+                        primary_start=primary_start,
+                        primary_end=primary_end,
+                        comparison_start=comparison_start,
+                        comparison_end=comparison_end
+                    ),
+                    timeout=45.0
                 )
                 
                 return {
@@ -406,11 +433,14 @@ Respond with valid JSON only, no additional text or formatting."""
                 
                 logger.info(f"MCP single period query: {start_date} to {end_date}")
                 
-                result = await self.mcp_client.get_analytics_report(
-                    metrics=enhanced_query.metrics,
-                    dimensions=enhanced_query.dimensions,
-                    start_date=start_date,
-                    end_date=end_date
+                result = await asyncio.wait_for(
+                    self.mcp_client.get_analytics_report(
+                        metrics=enhanced_query.metrics,
+                        dimensions=enhanced_query.dimensions,
+                        start_date=start_date,
+                        end_date=end_date
+                    ),
+                    timeout=45.0
                 )
                 
                 return {
@@ -426,6 +456,14 @@ Respond with valid JSON only, no additional text or formatting."""
                     "validation": validation_result
                 }
             
+        except asyncio.TimeoutError:
+            logger.error("MCP data retrieval timed out")
+            return {
+                "error": "Data retrieval timed out",
+                "analysis_type": "error",
+                "output_format": enhanced_query.output_format if hasattr(enhanced_query, 'output_format') else "detailed",
+                "timeout": True
+            }
         except Exception as e:
             logger.error(f"Error retrieving analytics data via MCP: {str(e)}")
             return {
@@ -435,7 +473,6 @@ Respond with valid JSON only, no additional text or formatting."""
             }
 
     async def _analyze_data(self, enhanced_query: AnalyticsQuery, raw_data: Dict[str, Any]) -> AnalyticsResult:
-        """Stage 3: Analyze data and generate insights"""
         try:
             is_comparison = raw_data.get("analysis_type") == "comparison"
             output_format = raw_data.get("output_format", "detailed")
@@ -477,7 +514,7 @@ CRITICAL: User requested "{output_format}" format - adapt your response accordin
             })
             
             content = response.content.strip()
-            logger.info(f"Analysis response: {content}")
+            logger.debug(f"Analysis response length: {len(content)}")
             
             result_dict = self._extract_json_from_response(content)
             result_dict["raw_data"] = raw_data
@@ -494,7 +531,6 @@ CRITICAL: User requested "{output_format}" format - adapt your response accordin
             )
 
     def _extract_json_from_response(self, content: str) -> Dict:
-        """Extract JSON from LLM response with multiple fallback methods"""
         try:
             return json.loads(content)
         except json.JSONDecodeError:
@@ -538,7 +574,6 @@ CRITICAL: User requested "{output_format}" format - adapt your response accordin
         }
 
     def _parse_time_period(self, time_period: str, current_date: str) -> tuple[str, str]:
-        """Parse time period string into start and end dates"""
         from datetime import datetime, timedelta
         import calendar
         

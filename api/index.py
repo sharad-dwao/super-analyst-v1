@@ -1,11 +1,12 @@
 import os
 import json
 import logging
+import asyncio
 from typing import List
 from openai.types.chat.chat_completion_message_param import ChatCompletionMessageParam
 from pydantic import BaseModel
 from dotenv import load_dotenv
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, Query, HTTPException
 from fastapi.responses import StreamingResponse
 from openai import OpenAI
 from .utils.prompt import ClientMessage, convert_to_openai_messages
@@ -13,9 +14,10 @@ from .utils.mcp_pipeline import MCPAnalyticsPipeline
 
 load_dotenv(".env.local")
 
+# Enhanced logging configuration
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
+    format="%(asctime)s [%(levelname)s] %(name)s:%(lineno)d - %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 logger = logging.getLogger(__name__)
@@ -27,6 +29,7 @@ llm_model = "openai/gpt-4.1-mini"
 client = OpenAI(
     api_key=os.environ.get("OPENROUTER_API_KEY"),
     base_url="https://openrouter.ai/api/v1",
+    timeout=60.0,  # Increased timeout
 )
 
 mcp_server_url = os.environ.get("MCP_SERVER_URL", "http://localhost:8001")
@@ -36,13 +39,10 @@ mcp_pipeline = MCPAnalyticsPipeline(
     base_url="https://openrouter.ai/api/v1"
 )
 
-
 class Request(BaseModel):
     messages: List[ClientMessage]
 
-
 def get_tools_def():
-    """Build OpenAI function definitions for MCP integration"""
     return [
         {
             "type": "function",
@@ -71,19 +71,34 @@ def get_tools_def():
         },
     ]
 
-
 async def analyze_with_mcp(user_query: str) -> dict:
-    """Process user query through MCP-based pipeline"""
-    logger.info(f"Processing query with MCP: {user_query}")
-    result = await mcp_pipeline.process_query(user_query)
-    return result
-
+    logger.info(f"Starting MCP analysis for query: {user_query[:100]}...")
+    try:
+        result = await asyncio.wait_for(
+            mcp_pipeline.process_query(user_query),
+            timeout=120.0  # 2 minute timeout
+        )
+        logger.info("MCP analysis completed successfully")
+        return result
+    except asyncio.TimeoutError:
+        logger.error("MCP analysis timed out")
+        return {
+            "error": "Analysis timed out",
+            "success": False,
+            "timeout": True
+        }
+    except Exception as e:
+        logger.error(f"MCP analysis failed: {str(e)}")
+        return {
+            "error": str(e),
+            "success": False
+        }
 
 async def get_mcp_server_status() -> dict:
-    """Get MCP server status and available tools"""
+    logger.info("Checking MCP server status")
     try:
         await mcp_pipeline.initialize()
-        return {
+        status = {
             "status": "connected",
             "server_url": mcp_server_url,
             "tools_available": len(mcp_pipeline.available_tools),
@@ -95,8 +110,10 @@ async def get_mcp_server_status() -> dict:
                 for tool in mcp_pipeline.available_tools
             ]
         }
+        logger.info(f"MCP server status: {status['status']}, tools: {status['tools_available']}")
+        return status
     except Exception as e:
-        logger.error(f"Failed to get MCP server status: {str(e)}")
+        logger.error(f"MCP server status check failed: {str(e)}")
         return {
             "status": "error",
             "server_url": mcp_server_url,
@@ -104,144 +121,118 @@ async def get_mcp_server_status() -> dict:
             "tools_available": 0
         }
 
-
 available_tools = {
     "analyze_with_mcp": analyze_with_mcp,
     "get_mcp_server_status": get_mcp_server_status,
 }
 
-
 def stream_text(messages: List[ChatCompletionMessageParam], protocol: str = "data"):
-    """Internal generator to handle streaming tokens and function calls"""
+    logger.info(f"Starting stream with {len(messages)} messages")
     draft_tool_calls = []
     draft_tool_calls_index = -1
+    
+    try:
+        stream = client.chat.completions.create(
+            messages=messages,
+            model=llm_model,
+            stream=True,
+            tools=get_tools_def(),
+            timeout=60.0,
+        )
 
-    stream = client.chat.completions.create(
-        messages=messages,
-        model="openai/gpt-4.1-mini",
-        stream=True,
-        tools=get_tools_def(),
-    )
+        for chunk in stream:
+            try:
+                for choice in chunk.choices:
+                    if choice.finish_reason == "stop":
+                        logger.debug("Stream finished normally")
+                        continue
 
-    for chunk in stream:
-        for choice in chunk.choices:
-            if choice.finish_reason == "stop":
+                    elif choice.finish_reason == "tool_calls":
+                        logger.info(f"Processing {len(draft_tool_calls)} tool calls")
+                        
+                        for call in draft_tool_calls:
+                            logger.info(f"Executing tool: {call['name']}")
+                            yield f"9:{{\"toolCallId\":\"{call['id']}\",\"toolName\":\"{call['name']}\",\"args\":{call['arguments']}}}\n"
+
+                        # Process tool calls with proper async handling
+                        loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(loop)
+                        
+                        try:
+                            for call in draft_tool_calls:
+                                try:
+                                    if call["name"] == "analyze_with_mcp":
+                                        arguments = json.loads(call["arguments"])
+                                        result = loop.run_until_complete(
+                                            analyze_with_mcp(arguments.get("user_query", ""))
+                                        )
+                                    else:
+                                        arguments = json.loads(call["arguments"])
+                                        result = loop.run_until_complete(
+                                            available_tools[call["name"]](**arguments)
+                                        )
+                                    
+                                    logger.info(f"Tool {call['name']} completed successfully")
+                                    yield f"a:{{\"toolCallId\":\"{call['id']}\",\"toolName\":\"{call['name']}\",\"args\":{call['arguments']},\"result\":{json.dumps(result)}}}\n"
+                                    
+                                except Exception as tool_error:
+                                    logger.error(f"Tool {call['name']} failed: {str(tool_error)}")
+                                    error_result = {
+                                        "error": str(tool_error),
+                                        "success": False,
+                                        "tool_name": call['name']
+                                    }
+                                    yield f"a:{{\"toolCallId\":\"{call['id']}\",\"toolName\":\"{call['name']}\",\"args\":{call['arguments']},\"result\":{json.dumps(error_result)}}}\n"
+                        finally:
+                            loop.close()
+
+                    elif choice.delta.tool_calls:
+                        for tc in choice.delta.tool_calls:
+                            if tc.id is not None:
+                                draft_tool_calls_index += 1
+                                draft_tool_calls.append(
+                                    {"id": tc.id, "name": tc.function.name, "arguments": ""}
+                                )
+                            else:
+                                if draft_tool_calls_index >= 0:
+                                    draft_tool_calls[draft_tool_calls_index]["arguments"] += tc.function.arguments
+
+                    else:
+                        text = choice.delta.content
+                        if text:
+                            yield f"0:{json.dumps(text)}\n"
+
+            except Exception as chunk_error:
+                logger.error(f"Error processing chunk: {str(chunk_error)}")
                 continue
 
-            elif choice.finish_reason == "tool_calls":
-                for call in draft_tool_calls:
-                    logger.info(f"Calling MCP tool {call['name']} with args {call['arguments']}")
-                    yield f"9:{{\"toolCallId\":\"{call['id']}\",\"toolName\":\"{call['name']}\",\"args\":{call['arguments']}}}\n"
-
-                import asyncio
-                for call in draft_tool_calls:
-                    if call["name"] == "analyze_with_mcp":
-                        result = asyncio.run(analyze_with_mcp_streaming(
-                            call["arguments"], call["id"]
-                        ))
-                        yield f"a:{{\"toolCallId\":\"{call['id']}\",\"toolName\":\"{call['name']}\",\"args\":{call['arguments']},\"result\":{json.dumps(result)}}}\n"
-                    else:
-                        result = asyncio.run(available_tools[call["name"]](
-                            **json.loads(call["arguments"])
-                        ))
-                        
-                        logger.info(f"MCP tool {call['name']} result: {result}")
-                        yield f"a:{{\"toolCallId\":\"{call['id']}\",\"toolName\":\"{call['name']}\",\"args\":{call['arguments']},\"result\":{json.dumps(result)}}}\n"
-
-            elif choice.delta.tool_calls:
-                for tc in choice.delta.tool_calls:
-                    if tc.id is not None:
-                        draft_tool_calls_index += 1
-                        draft_tool_calls.append(
-                            {"id": tc.id, "name": tc.function.name, "arguments": ""}
-                        )
-                    else:
-                        draft_tool_calls[draft_tool_calls_index][
-                            "arguments"
-                        ] += tc.function.arguments
-
-            else:
-                text = choice.delta.content
-                if text:
-                    yield f"0:{json.dumps(text)}\n"
-
-        if not chunk.choices:
+        # Final usage information
+        if hasattr(chunk, 'usage') and chunk.usage:
             usage = chunk.usage
             yield (
                 f"e:{{\"finishReason\":\"{('tool-calls' if draft_tool_calls else 'stop')}\","
                 f'"usage":{{"promptTokens":{usage.prompt_tokens},"completionTokens":{usage.completion_tokens}}},'
                 f'"isContinued":false}}\n'
             )
-
-
-async def analyze_with_mcp_streaming(arguments_str: str, tool_call_id: str):
-    """Process MCP analysis with streaming support"""
-    try:
-        arguments = json.loads(arguments_str)
-        user_query = arguments.get("user_query", "")
-        
-        logger.info(f"Starting MCP streaming analysis for: {user_query}")
-        
-        enhanced_query_data = await mcp_pipeline._enhance_query(user_query)
-        
-        stage1_text = f"**Stage 1 Complete:** Enhanced query - {enhanced_query_data.enhanced_query}\n\n"
-        yield_stream_text(stage1_text)
-        
-        stage2_text = "**Stage 2:** Retrieving analytics data via MCP server...\n\n"
-        yield_stream_text(stage2_text)
-        
-        raw_data = await mcp_pipeline._get_analytics_data_mcp(enhanced_query_data)
-        
-        stage2_complete = "**Stage 2 Complete:** Data retrieved successfully from MCP server\n\n"
-        yield_stream_text(stage2_complete)
-        
-        stage3_text = "**Stage 3:** Analyzing data and generating insights...\n\n"
-        yield_stream_text(stage3_text)
-        
-        final_result = await mcp_pipeline._analyze_data(enhanced_query_data, raw_data)
-        
-        return {
-            "stage_1_enhancement": enhanced_query_data.dict() if hasattr(enhanced_query_data, 'dict') else enhanced_query_data,
-            "stage_2_raw_data": raw_data,
-            "stage_3_analysis": final_result.dict() if hasattr(final_result, 'dict') else final_result,
-            "success": True,
-            "mcp_info": {
-                "server_url": mcp_server_url,
-                "tools_available": len(mcp_pipeline.available_tools),
-                "pipeline_type": "mcp_based"
-            }
-        }
-        
-    except Exception as e:
-        logger.error(f"Error in MCP streaming analysis: {str(e)}")
-        error_text = f"**Error:** {str(e)}\n\n"
-        yield_stream_text(error_text)
-        return {
-            "error": str(e),
-            "success": False,
-            "mcp_info": {
-                "server_url": mcp_server_url,
-                "pipeline_type": "mcp_based"
-            }
-        }
-
-
-def yield_stream_text(text: str):
-    """Helper function to yield streaming text"""
-    pass
-
+        else:
+            yield f"e:{{\"finishReason\":\"{('tool-calls' if draft_tool_calls else 'stop')}\",\"usage\":{{\"promptTokens\":0,\"completionTokens\":0}},\"isContinued\":false}}\n"
+            
+    except Exception as stream_error:
+        logger.error(f"Stream error: {str(stream_error)}")
+        yield f"e:{{\"finishReason\":\"error\",\"error\":\"{str(stream_error)}\",\"isContinued\":false}}\n"
 
 PROMPT = None
 with open(r"api\sys_prompt.md") as infile:
     PROMPT = "".join(infile.readlines())
 
-
 @app.post("/api/chat")
 async def handle_chat_data(request: Request, protocol: str = Query("data")):
-    """Endpoint to handle incoming chat messages and stream responses using MCP servers"""
-    system_msg = {
-        "role": "system",
-        "content": f"""{PROMPT}
+    logger.info(f"Received chat request with {len(request.messages)} messages")
+    
+    try:
+        system_msg = {
+            "role": "system",
+            "content": f"""{PROMPT}
 
 You now have access to a powerful MCP (Model Context Protocol) based analytics system:
 
@@ -267,27 +258,43 @@ When users ask analytics questions, use the `analyze_with_mcp` function which wi
 - Support real-time streaming of analysis progress
 
 MCP Server URL: {mcp_server_url}""",
-    }
+        }
 
-    messages = request.messages
-    openai_messages = convert_to_openai_messages(messages)
-    
-    openai_messages.insert(0, system_msg)
-    
-    response = StreamingResponse(stream_text(openai_messages, protocol))
-    response.headers["x-vercel-ai-data-stream"] = "v1"
-    return response
-
+        messages = request.messages
+        openai_messages = convert_to_openai_messages(messages)
+        
+        # Limit message history to prevent context overflow
+        max_messages = 20
+        if len(openai_messages) > max_messages:
+            logger.info(f"Truncating message history from {len(openai_messages)} to {max_messages}")
+            openai_messages = openai_messages[-max_messages:]
+        
+        openai_messages.insert(0, system_msg)
+        
+        logger.info(f"Processing {len(openai_messages)} messages (including system)")
+        
+        response = StreamingResponse(
+            stream_text(openai_messages, protocol),
+            media_type="text/plain"
+        )
+        response.headers["x-vercel-ai-data-stream"] = "v1"
+        response.headers["Cache-Control"] = "no-cache"
+        response.headers["Connection"] = "keep-alive"
+        
+        return response
+        
+    except Exception as e:
+        logger.error(f"Chat handler error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/mcp/status")
 async def get_mcp_status():
-    """Endpoint to check MCP server status"""
+    logger.info("MCP status endpoint called")
     return await get_mcp_server_status()
-
 
 @app.on_event("startup")
 async def startup_event():
-    """Initialize MCP pipeline on startup"""
+    logger.info("Starting FastAPI application")
     try:
         await mcp_pipeline.initialize()
         logger.info("MCP pipeline initialized successfully")
