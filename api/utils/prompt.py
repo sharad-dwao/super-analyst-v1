@@ -66,7 +66,6 @@ def convert_to_openai_messages(
     messages: List[ClientMessage],
 ) -> List[ChatCompletionMessageParam]:
     openai_messages = []
-    tool_call_ids = set()  # Track tool call IDs to validate tool messages
 
     for message in messages:
         parts = []
@@ -87,43 +86,42 @@ def convert_to_openai_messages(
             "content": parts,
         }
 
-        # Handle tool invocations
-        if message.toolInvocations:
+        # Handle tool invocations - only process if we have valid tool calls
+        if message.toolInvocations and message.role == "assistant":
             tool_calls = []
+            tool_results = []
             
             for toolInvocation in message.toolInvocations:
                 if toolInvocation.state == ToolInvocationState.CALL:
-                    tool_call_id = toolInvocation.toolCallId
-                    tool_call_ids.add(tool_call_id)  # Track this tool call ID
-                    
                     tool_calls.append({
-                        "id": tool_call_id,
+                        "id": toolInvocation.toolCallId,
                         "type": "function",
                         "function": {
                             "name": toolInvocation.toolName,
                             "arguments": json.dumps(toolInvocation.args),
                         },
                     })
+                elif toolInvocation.state == ToolInvocationState.RESULT:
+                    tool_results.append(toolInvocation)
             
             # Only add tool_calls if there are actual tool calls
             if tool_calls:
                 message_dict["tool_calls"] = tool_calls
-            
-            # Add the message
-            openai_messages.append(message_dict)
-            
-            # Add tool result messages separately, but only if we have the corresponding tool call
-            for toolInvocation in message.toolInvocations:
-                if (toolInvocation.state == ToolInvocationState.RESULT and 
-                    toolInvocation.toolCallId in tool_call_ids):
+                openai_messages.append(message_dict)
+                
+                # Add tool result messages separately
+                for tool_result in tool_results:
                     tool_message = {
                         "role": "tool",
-                        "tool_call_id": toolInvocation.toolCallId,
-                        "content": json.dumps(toolInvocation.result),
+                        "tool_call_id": tool_result.toolCallId,
+                        "content": json.dumps(tool_result.result),
                     }
                     openai_messages.append(tool_message)
+            else:
+                # No tool calls, just add the regular message
+                openai_messages.append(message_dict)
         else:
-            # No tool invocations, just add the regular message
+            # No tool invocations or not an assistant message, just add the regular message
             openai_messages.append(message_dict)
 
     return openai_messages

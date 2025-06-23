@@ -195,7 +195,8 @@ async def stream_text(
                             logger.info(f"Executing tool: {call['name']}")
                             yield f"9:{{\"toolCallId\":\"{call['id']}\",\"toolName\":\"{call['name']}\",\"args\":{call['arguments']}}}\n"
 
-                        # Execute tools and send results
+                        # Execute tools and collect results
+                        tool_results = []
                         for call in draft_tool_calls:
                             try:
                                 if call["name"] == "analyze_with_mcp":
@@ -209,6 +210,11 @@ async def stream_text(
                                         **arguments
                                     )
 
+                                tool_results.append({
+                                    "tool_call_id": call["id"],
+                                    "result": result
+                                })
+
                                 logger.info(f"Tool {call['name']} completed successfully")
                                 yield f"a:{{\"toolCallId\":\"{call['id']}\",\"toolName\":\"{call['name']}\",\"args\":{call['arguments']},\"result\":{json.dumps(result)}}}\n"
 
@@ -219,7 +225,60 @@ async def stream_text(
                                     "success": False,
                                     "tool_name": call["name"],
                                 }
+                                tool_results.append({
+                                    "tool_call_id": call["id"],
+                                    "result": error_result
+                                })
                                 yield f"a:{{\"toolCallId\":\"{call['id']}\",\"toolName\":\"{call['name']}\",\"args\":{call['arguments']},\"result\":{json.dumps(error_result)}}}\n"
+
+                        # Create proper conversation flow for final response
+                        assistant_message = {
+                            "role": "assistant",
+                            "content": "",
+                            "tool_calls": [
+                                {
+                                    "id": call["id"],
+                                    "type": "function",
+                                    "function": {
+                                        "name": call["name"],
+                                        "arguments": call["arguments"]
+                                    }
+                                }
+                                for call in draft_tool_calls
+                            ]
+                        }
+
+                        # Add tool result messages
+                        tool_messages = []
+                        for tool_result in tool_results:
+                            tool_messages.append({
+                                "role": "tool",
+                                "tool_call_id": tool_result["tool_call_id"],
+                                "content": json.dumps(tool_result["result"])
+                            })
+
+                        # Get final response from LLM
+                        try:
+                            final_messages = messages + [assistant_message] + tool_messages
+                            
+                            final_stream = await client.chat.completions.create(
+                                messages=final_messages,
+                                model=llm_model,
+                                stream=True,
+                                timeout=60.0,
+                            )
+
+                            async for final_chunk in final_stream:
+                                for final_choice in final_chunk.choices:
+                                    if final_choice.delta.content:
+                                        yield f"0:{json.dumps(final_choice.delta.content)}\n"
+                                    
+                                    if final_choice.finish_reason == "stop":
+                                        break
+
+                        except Exception as final_error:
+                            logger.error(f"Error getting final response: {str(final_error)}")
+                            yield f"0:{json.dumps('I apologize, but I encountered an error while processing the tool results. Please try again.')}\n"
 
                     elif choice.delta.tool_calls:
                         has_tool_calls = True
