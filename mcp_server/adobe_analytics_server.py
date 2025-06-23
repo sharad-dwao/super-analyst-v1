@@ -26,10 +26,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 app = FastAPI(
-    title="Adobe Analytics MCP Server", 
-    version="1.0.0",
-    docs_url=None,
-    redoc_url=None
+    title="Adobe Analytics MCP Server", version="1.0.0", docs_url=None, redoc_url=None
 )
 
 ALLOWED_ORIGINS = [
@@ -64,8 +61,12 @@ class MCPRequest(BaseModel):
 
 
 class MCPResponse(BaseModel):
-    result: Optional[Dict[str, Any]] = Field(default=None, description="Response result")
-    error: Optional[Dict[str, Any]] = Field(default=None, description="Error information")
+    result: Optional[Dict[str, Any]] = Field(
+        default=None, description="Response result"
+    )
+    error: Optional[Dict[str, Any]] = Field(
+        default=None, description="Error information"
+    )
     id: Optional[str] = Field(default=None, description="Request ID")
 
 
@@ -76,25 +77,63 @@ class MCPTool(BaseModel):
 
 
 METRICS = [
-    "metrics/visits", "metrics/visitors", "metrics/pageviews", "metrics/bounces",
-    "metrics/bouncerate", "metrics/entries", "metrics/exits", "metrics/orders",
-    "metrics/revenue", "metrics/conversionrate", "metrics/averagetimespentonsite",
-    "metrics/averagetimespentonpage", "metrics/averagevisitdepth", "metrics/units",
-    "metrics/carts", "metrics/cartadditions", "metrics/cartremovals", "metrics/cartviews",
-    "metrics/checkouts", "metrics/occurrences", "metrics/singlepagevisits", "metrics/reloads",
-    "metrics/timespent", "metrics/campaigninstances", "metrics/clickthroughs"
+    "metrics/visits",
+    "metrics/visitors",
+    "metrics/pageviews",
+    "metrics/bounces",
+    "metrics/bouncerate",
+    "metrics/entries",
+    "metrics/exits",
+    "metrics/orders",
+    "metrics/revenue",
+    "metrics/conversionrate",
+    "metrics/averagetimespentonsite",
+    "metrics/averagetimespentonpage",
+    "metrics/averagevisitdepth",
+    "metrics/units",
+    "metrics/carts",
+    "metrics/cartadditions",
+    "metrics/cartremovals",
+    "metrics/cartviews",
+    "metrics/checkouts",
+    "metrics/occurrences",
+    "metrics/singlepagevisits",
+    "metrics/reloads",
+    "metrics/timespent",
+    "metrics/campaigninstances",
+    "metrics/clickthroughs",
 ]
 
 DIMENSIONS = [
-    "variables/page", "variables/pagename", "variables/pageurl", "variables/sitesection",
-    "variables/referrer", "variables/referrertype", "variables/referringdomain",
-    "variables/campaign", "variables/geocountry", "variables/georegion", "variables/geocity",
-    "variables/browser", "variables/browsertype", "variables/operatingsystem",
-    "variables/mobiledevicetype", "variables/mobiledevicename", "variables/marketingchannel",
-    "variables/marketingchanneldetail", "variables/daterangemonth", "variables/daterangeweek",
-    "variables/daterangeday", "variables/daterangeyear", "variables/daterangequarter",
-    "variables/searchengine", "variables/searchenginekeyword", "variables/entrypage",
-    "variables/exitpage", "variables/language", "variables/visitnumber"
+    "variables/page",
+    "variables/pagename",
+    "variables/pageurl",
+    "variables/sitesection",
+    "variables/referrer",
+    "variables/referrertype",
+    "variables/referringdomain",
+    "variables/campaign",
+    "variables/geocountry",
+    "variables/georegion",
+    "variables/geocity",
+    "variables/browser",
+    "variables/browsertype",
+    "variables/operatingsystem",
+    "variables/mobiledevicetype",
+    "variables/mobiledevicename",
+    "variables/marketingchannel",
+    "variables/marketingchanneldetail",
+    "variables/daterangemonth",
+    "variables/daterangeweek",
+    "variables/daterangeday",
+    "variables/daterangeyear",
+    "variables/daterangequarter",
+    "variables/searchengine",
+    "variables/searchenginekeyword",
+    "variables/entrypage",
+    "variables/exitpage",
+    "variables/language",
+    "variables/visitnumber",
 ]
 
 
@@ -102,13 +141,15 @@ DIMENSIONS = [
 async def security_middleware(request: Request, call_next):
     """Security middleware to restrict access to internal requests only"""
     client_host = request.client.host if request.client else "unknown"
-    
+
     allowed_hosts = ["127.0.0.1", "localhost", "::1"]
-    
+
     if client_host not in allowed_hosts:
         logger.warning(f"Blocked external access attempt from: {client_host}")
-        raise HTTPException(status_code=403, detail="Access forbidden - internal use only")
-    
+        raise HTTPException(
+            status_code=403, detail="Access forbidden - internal use only"
+        )
+
     response = await call_next(request)
     return response
 
@@ -134,11 +175,13 @@ def get_access_token() -> str:
         raise
 
 
-def validate_metrics_dimensions(metrics: List[str], dimensions: List[str]) -> Dict[str, Any]:
+def validate_metrics_dimensions(
+    metrics: List[str], dimensions: List[str]
+) -> Dict[str, Any]:
     """Validate and clean metrics and dimensions"""
     valid_metrics = []
     invalid_metrics = []
-    
+
     for metric in metrics:
         if metric in METRICS:
             valid_metrics.append(metric)
@@ -150,10 +193,10 @@ def validate_metrics_dimensions(metrics: List[str], dimensions: List[str]) -> Di
                     break
             else:
                 invalid_metrics.append(metric)
-    
+
     valid_dimensions = []
     invalid_dimensions = []
-    
+
     for dimension in dimensions:
         if dimension in DIMENSIONS:
             valid_dimensions.append(dimension)
@@ -165,12 +208,12 @@ def validate_metrics_dimensions(metrics: List[str], dimensions: List[str]) -> Di
                     break
             else:
                 invalid_dimensions.append(dimension)
-    
+
     return {
         "valid_metrics": valid_metrics or ["metrics/visits"],
         "invalid_metrics": invalid_metrics,
         "valid_dimensions": valid_dimensions or ["variables/page"],
-        "invalid_dimensions": invalid_dimensions
+        "invalid_dimensions": invalid_dimensions,
     }
 
 
@@ -179,17 +222,17 @@ def get_analytics_report(
     dimensions: List[str],
     start_date: str,
     end_date: str,
-    limit: int = 20
+    limit: int = 20,
 ) -> Dict[str, Any]:
     """Get Adobe Analytics report with improved error handling"""
     try:
         validation = validate_metrics_dimensions(metrics, dimensions)
         clean_metrics = validation["valid_metrics"]
         clean_dimensions = validation["valid_dimensions"]
-        
+
         if validation["invalid_metrics"] or validation["invalid_dimensions"]:
             logger.warning(f"Invalid metrics/dimensions found: {validation}")
-        
+
         headers = {
             "Accept": "application/json",
             "Content-Type": "application/json;charset=utf-8",
@@ -235,12 +278,14 @@ def get_analytics_report(
 
         url = f"https://analytics.adobe.io/api/{COMPANY_ID}/reports"
 
-        logger.info(f"Making Adobe Analytics request for {len(clean_metrics)} metrics, {len(clean_dimensions)} dimensions")
+        logger.info(
+            f"Making Adobe Analytics request for {len(clean_metrics)} metrics, {len(clean_dimensions)} dimensions"
+        )
         res = requests.post(url, headers=headers, json=body, timeout=30)
         res.raise_for_status()
 
         response_data = res.json()
-        
+
         return {
             "success": True,
             "data": response_data,
@@ -250,16 +295,16 @@ def get_analytics_report(
                 "date_range": f"{start_date} to {end_date}",
                 "total_rows": len(response_data.get("rows", [])),
                 "server_type": "mcp_adobe_analytics",
-                "validation": validation
-            }
+                "validation": validation,
+            },
         }
 
     except requests.exceptions.HTTPError as err:
         error_details = {
             "success": False,
             "error": f"Adobe Analytics API error: {err.response.status_code} {err.response.reason}",
-            "details": err.response.text if hasattr(err, 'response') else str(err),
-            "error_type": "api_error"
+            "details": err.response.text if hasattr(err, "response") else str(err),
+            "error_type": "api_error",
         }
         logger.error(f"Adobe Analytics API error: {error_details}")
         return error_details
@@ -267,7 +312,7 @@ def get_analytics_report(
         error_details = {
             "success": False,
             "error": f"Unexpected error: {str(e)}",
-            "error_type": "internal_error"
+            "error_type": "internal_error",
         }
         logger.error(f"Unexpected error in get_analytics_report: {error_details}")
         return error_details
@@ -280,39 +325,69 @@ def parse_time_period(time_period: str, current_date: str) -> tuple[str, str]:
     except ValueError:
         logger.warning(f"Invalid current_date format: {current_date}, using today")
         current = datetime.now()
-    
-    if "_" in time_period and any(month in time_period.lower() for month in [
-        "january", "february", "march", "april", "may", "june",
-        "july", "august", "september", "october", "november", "december"
-    ]):
+
+    if "_" in time_period and any(
+        month in time_period.lower()
+        for month in [
+            "january",
+            "february",
+            "march",
+            "april",
+            "may",
+            "june",
+            "july",
+            "august",
+            "september",
+            "october",
+            "november",
+            "december",
+        ]
+    ):
         try:
             month_name, year = time_period.lower().split("_")
             year = int(year)
             month_num = {
-                "january": 1, "february": 2, "march": 3, "april": 4,
-                "may": 5, "june": 6, "july": 7, "august": 8,
-                "september": 9, "october": 10, "november": 11, "december": 12
+                "january": 1,
+                "february": 2,
+                "march": 3,
+                "april": 4,
+                "may": 5,
+                "june": 6,
+                "july": 7,
+                "august": 8,
+                "september": 9,
+                "october": 10,
+                "november": 11,
+                "december": 12,
             }[month_name]
-            
+
             first_day = datetime(year, month_num, 1)
-            last_day = datetime(year, month_num, calendar.monthrange(year, month_num)[1])
-            
+            last_day = datetime(
+                year, month_num, calendar.monthrange(year, month_num)[1]
+            )
+
             return first_day.strftime("%Y-%m-%d"), last_day.strftime("%Y-%m-%d")
         except (ValueError, KeyError) as e:
-            logger.warning(f"Could not parse specific month format: {time_period}, error: {e}")
-    
+            logger.warning(
+                f"Could not parse specific month format: {time_period}, error: {e}"
+            )
+
     if "current_month" in time_period.lower() or "this month" in time_period.lower():
         first_day = current.replace(day=1)
-        last_day = current.replace(day=calendar.monthrange(current.year, current.month)[1])
+        last_day = current.replace(
+            day=calendar.monthrange(current.year, current.month)[1]
+        )
         return first_day.strftime("%Y-%m-%d"), last_day.strftime("%Y-%m-%d")
-    
+
     if "previous_month" in time_period.lower() or "last month" in time_period.lower():
         first_of_current = current.replace(day=1)
         last_of_previous = first_of_current - timedelta(days=1)
         first_of_previous = last_of_previous.replace(day=1)
-        
-        return first_of_previous.strftime("%Y-%m-%d"), last_of_previous.strftime("%Y-%m-%d")
-    
+
+        return first_of_previous.strftime("%Y-%m-%d"), last_of_previous.strftime(
+            "%Y-%m-%d"
+        )
+
     if "yesterday" in time_period.lower():
         date_obj = current - timedelta(days=1)
         return date_obj.strftime("%Y-%m-%d"), date_obj.strftime("%Y-%m-%d")
@@ -343,29 +418,29 @@ MCP_TOOLS = [
                 "metrics": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "List of metrics to retrieve (e.g., metrics/visits, metrics/pageviews)"
+                    "description": "List of metrics to retrieve (e.g., metrics/visits, metrics/pageviews)",
                 },
                 "dimensions": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "List of dimensions for breakdown (e.g., variables/page, variables/browser)"
+                    "description": "List of dimensions for breakdown (e.g., variables/page, variables/browser)",
                 },
                 "start_date": {
                     "type": "string",
-                    "description": "Start date in YYYY-MM-DD format"
+                    "description": "Start date in YYYY-MM-DD format",
                 },
                 "end_date": {
                     "type": "string",
-                    "description": "End date in YYYY-MM-DD format"
+                    "description": "End date in YYYY-MM-DD format",
                 },
                 "limit": {
                     "type": "integer",
                     "default": 20,
-                    "description": "Maximum number of rows to return (max 50)"
-                }
+                    "description": "Maximum number of rows to return (max 50)",
+                },
             },
-            "required": ["metrics", "dimensions", "start_date", "end_date"]
-        }
+            "required": ["metrics", "dimensions", "start_date", "end_date"],
+        },
     ),
     MCPTool(
         name="get_comparison_report",
@@ -376,21 +451,44 @@ MCP_TOOLS = [
                 "metrics": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "List of metrics to retrieve"
+                    "description": "List of metrics to retrieve",
                 },
                 "dimensions": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "List of dimensions for breakdown"
+                    "description": "List of dimensions for breakdown",
                 },
-                "primary_start": {"type": "string", "description": "Primary period start date (YYYY-MM-DD)"},
-                "primary_end": {"type": "string", "description": "Primary period end date (YYYY-MM-DD)"},
-                "comparison_start": {"type": "string", "description": "Comparison period start date (YYYY-MM-DD)"},
-                "comparison_end": {"type": "string", "description": "Comparison period end date (YYYY-MM-DD)"},
-                "limit": {"type": "integer", "default": 20, "description": "Maximum number of rows to return"}
+                "primary_start": {
+                    "type": "string",
+                    "description": "Primary period start date (YYYY-MM-DD)",
+                },
+                "primary_end": {
+                    "type": "string",
+                    "description": "Primary period end date (YYYY-MM-DD)",
+                },
+                "comparison_start": {
+                    "type": "string",
+                    "description": "Comparison period start date (YYYY-MM-DD)",
+                },
+                "comparison_end": {
+                    "type": "string",
+                    "description": "Comparison period end date (YYYY-MM-DD)",
+                },
+                "limit": {
+                    "type": "integer",
+                    "default": 20,
+                    "description": "Maximum number of rows to return",
+                },
             },
-            "required": ["metrics", "dimensions", "primary_start", "primary_end", "comparison_start", "comparison_end"]
-        }
+            "required": [
+                "metrics",
+                "dimensions",
+                "primary_start",
+                "primary_end",
+                "comparison_start",
+                "comparison_end",
+            ],
+        },
     ),
     MCPTool(
         name="validate_schema",
@@ -401,26 +499,22 @@ MCP_TOOLS = [
                 "metrics": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "List of metrics to validate"
+                    "description": "List of metrics to validate",
                 },
                 "dimensions": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "List of dimensions to validate"
-                }
+                    "description": "List of dimensions to validate",
+                },
             },
-            "required": ["metrics", "dimensions"]
-        }
+            "required": ["metrics", "dimensions"],
+        },
     ),
     MCPTool(
         name="get_current_date",
         description="Get current server date in ISO format",
-        input_schema={
-            "type": "object",
-            "properties": {},
-            "required": []
-        }
-    )
+        input_schema={"type": "object", "properties": {}, "required": []},
+    ),
 ]
 
 
@@ -429,21 +523,18 @@ async def handle_mcp_request(request: MCPRequest) -> MCPResponse:
     """Handle MCP requests with comprehensive error handling"""
     try:
         logger.info(f"Received MCP request: {request.method}")
-        
+
         if request.method == "tools/list":
             return MCPResponse(
-                result={
-                    "tools": [tool.dict() for tool in MCP_TOOLS]
-                },
-                id=request.id
+                result={"tools": [tool.dict() for tool in MCP_TOOLS]}, id=request.id
             )
-        
+
         elif request.method == "tools/call":
             tool_name = request.params.get("name")
             arguments = request.params.get("arguments", {})
-            
+
             logger.info(f"Calling tool: {tool_name} with arguments: {arguments}")
-            
+
             if tool_name == "get_analytics_report":
                 required_args = ["metrics", "dimensions", "start_date", "end_date"]
                 missing_args = [arg for arg in required_args if arg not in arguments]
@@ -451,59 +542,63 @@ async def handle_mcp_request(request: MCPRequest) -> MCPResponse:
                     return MCPResponse(
                         error={
                             "code": -32602,
-                            "message": f"Missing required arguments: {missing_args}"
+                            "message": f"Missing required arguments: {missing_args}",
                         },
-                        id=request.id
+                        id=request.id,
                     )
-                
+
                 result = get_analytics_report(
                     metrics=arguments["metrics"],
                     dimensions=arguments["dimensions"],
                     start_date=arguments["start_date"],
                     end_date=arguments["end_date"],
-                    limit=arguments.get("limit", 20)
+                    limit=arguments.get("limit", 20),
                 )
-                
+
                 return MCPResponse(
                     result={
                         "content": [
-                            {
-                                "type": "text",
-                                "text": json.dumps(result, indent=2)
-                            }
+                            {"type": "text", "text": json.dumps(result, indent=2)}
                         ]
                     },
-                    id=request.id
+                    id=request.id,
                 )
-            
+
             elif tool_name == "get_comparison_report":
-                required_args = ["metrics", "dimensions", "primary_start", "primary_end", "comparison_start", "comparison_end"]
+                required_args = [
+                    "metrics",
+                    "dimensions",
+                    "primary_start",
+                    "primary_end",
+                    "comparison_start",
+                    "comparison_end",
+                ]
                 missing_args = [arg for arg in required_args if arg not in arguments]
                 if missing_args:
                     return MCPResponse(
                         error={
                             "code": -32602,
-                            "message": f"Missing required arguments: {missing_args}"
+                            "message": f"Missing required arguments: {missing_args}",
                         },
-                        id=request.id
+                        id=request.id,
                     )
-                
+
                 primary_result = get_analytics_report(
                     metrics=arguments["metrics"],
                     dimensions=arguments["dimensions"],
                     start_date=arguments["primary_start"],
                     end_date=arguments["primary_end"],
-                    limit=arguments.get("limit", 20)
+                    limit=arguments.get("limit", 20),
                 )
-                
+
                 comparison_result = get_analytics_report(
                     metrics=arguments["metrics"],
                     dimensions=arguments["dimensions"],
                     start_date=arguments["comparison_start"],
                     end_date=arguments["comparison_end"],
-                    limit=arguments.get("limit", 20)
+                    limit=arguments.get("limit", 20),
                 )
-                
+
                 result = {
                     "success": True,
                     "comparison_type": "period_comparison",
@@ -512,22 +607,19 @@ async def handle_mcp_request(request: MCPRequest) -> MCPResponse:
                     "metadata": {
                         "primary_dates": f"{arguments['primary_start']} to {arguments['primary_end']}",
                         "comparison_dates": f"{arguments['comparison_start']} to {arguments['comparison_end']}",
-                        "server_type": "mcp_adobe_analytics"
-                    }
+                        "server_type": "mcp_adobe_analytics",
+                    },
                 }
-                
+
                 return MCPResponse(
                     result={
                         "content": [
-                            {
-                                "type": "text",
-                                "text": json.dumps(result, indent=2)
-                            }
+                            {"type": "text", "text": json.dumps(result, indent=2)}
                         ]
                     },
-                    id=request.id
+                    id=request.id,
                 )
-            
+
             elif tool_name == "validate_schema":
                 required_args = ["metrics", "dimensions"]
                 missing_args = [arg for arg in required_args if arg not in arguments]
@@ -535,83 +627,69 @@ async def handle_mcp_request(request: MCPRequest) -> MCPResponse:
                     return MCPResponse(
                         error={
                             "code": -32602,
-                            "message": f"Missing required arguments: {missing_args}"
+                            "message": f"Missing required arguments: {missing_args}",
                         },
-                        id=request.id
+                        id=request.id,
                     )
-                
+
                 validation = validate_metrics_dimensions(
-                    arguments["metrics"],
-                    arguments["dimensions"]
+                    arguments["metrics"], arguments["dimensions"]
                 )
-                
+
                 result = {
                     "success": True,
                     "validation": validation,
                     "schema_info": {
                         "total_metrics_available": len(METRICS),
                         "total_dimensions_available": len(DIMENSIONS),
-                        "server_type": "mcp_adobe_analytics"
-                    }
+                        "server_type": "mcp_adobe_analytics",
+                    },
                 }
-                
+
                 return MCPResponse(
                     result={
                         "content": [
-                            {
-                                "type": "text",
-                                "text": json.dumps(result, indent=2)
-                            }
+                            {"type": "text", "text": json.dumps(result, indent=2)}
                         ]
                     },
-                    id=request.id
+                    id=request.id,
                 )
-            
+
             elif tool_name == "get_current_date":
                 result = {
                     "success": True,
                     "date": date.today().isoformat(),
-                    "server_type": "mcp_adobe_analytics"
+                    "server_type": "mcp_adobe_analytics",
                 }
-                
+
                 return MCPResponse(
-                    result={
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": result["date"]
-                            }
-                        ]
-                    },
-                    id=request.id
+                    result={"content": [{"type": "text", "text": result["date"]}]},
+                    id=request.id,
                 )
-            
+
             else:
                 return MCPResponse(
                     error={
                         "code": -32601,
-                        "message": f"Unknown tool: {tool_name}. Available tools: {[tool.name for tool in MCP_TOOLS]}"
+                        "message": f"Unknown tool: {tool_name}. Available tools: {[tool.name for tool in MCP_TOOLS]}",
                     },
-                    id=request.id
+                    id=request.id,
                 )
-        
+
         else:
             return MCPResponse(
                 error={
                     "code": -32601,
-                    "message": f"Unknown method: {request.method}. Supported methods: tools/list, tools/call"
+                    "message": f"Unknown method: {request.method}. Supported methods: tools/list, tools/call",
                 },
-                id=request.id
+                id=request.id,
             )
-    
+
     except Exception as e:
         logger.error(f"Error handling MCP request: {str(e)}", exc_info=True)
         return MCPResponse(
-            error={
-                "code": -32603,
-                "message": f"Internal error: {str(e)}"
-            },
-            id=request.id
+            error={"code": -32603, "message": f"Internal error: {str(e)}"},
+            id=request.id,
         )
 
 
@@ -623,14 +701,14 @@ async def health_check():
         adobe_status = "connected" if token else "disconnected"
     except Exception as e:
         adobe_status = f"error: {str(e)}"
-    
+
     return {
         "status": "healthy",
         "server_type": "mcp_adobe_analytics",
         "version": "1.0.0",
         "tools_available": len(MCP_TOOLS),
         "adobe_analytics_status": adobe_status,
-        "security": "internal_access_only"
+        "security": "internal_access_only",
     }
 
 
@@ -640,7 +718,7 @@ async def list_tools():
     return {
         "tools": [tool.dict() for tool in MCP_TOOLS],
         "server_type": "mcp_adobe_analytics",
-        "total_tools": len(MCP_TOOLS)
+        "total_tools": len(MCP_TOOLS),
     }
 
 
@@ -648,16 +726,17 @@ async def list_tools():
 async def startup_event():
     """Startup event to validate configuration"""
     logger.info("Starting Adobe Analytics MCP Server...")
-    
+
     try:
         token = get_access_token()
         logger.info("Adobe Analytics connection validated successfully")
     except Exception as e:
         logger.error(f"Failed to validate Adobe Analytics connection: {str(e)}")
-    
+
     logger.info(f"MCP Server started with {len(MCP_TOOLS)} tools available")
 
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(app, host="127.0.0.1", port=8001)
