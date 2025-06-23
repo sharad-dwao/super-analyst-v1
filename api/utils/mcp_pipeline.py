@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import asyncio
+from datetime import datetime
 from typing import Dict, Any, List
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_openai import ChatOpenAI
@@ -34,7 +35,7 @@ class MCPAnalyticsPipeline:
             api_key=openai_api_key,
             base_url=base_url,
             temperature=0.1,
-            streaming=False,  # Disable streaming for internal LLM calls
+            streaming=False,
             timeout=60.0,
             max_retries=2,
         )
@@ -85,6 +86,20 @@ class MCPAnalyticsPipeline:
                 logger.error(f"Failed to initialize MCP pipeline: {str(e)}")
                 self.available_tools = []
     
+    def _get_current_date_context(self) -> str:
+        """Get current date context for LLM prompts"""
+        now = datetime.now()
+        return f"""
+## CURRENT DATE CONTEXT (CRITICAL FOR TIME CALCULATIONS):
+- **Today's Date**: {now.strftime("%Y-%m-%d")}
+- **Current Year**: {now.year}
+- **Current Month**: {now.strftime("%B")} ({now.month})
+- **Current Day**: {now.day}
+- **Day of Week**: {now.strftime("%A")}
+
+**IMPORTANT**: Always use this current date when interpreting relative time periods like "this month", "last month", "yesterday", etc.
+"""
+    
     def _get_enhancement_system_prompt(self) -> str:
         tools_info = ""
         for tool in self.available_tools:
@@ -93,7 +108,11 @@ class MCPAnalyticsPipeline:
         if not tools_info:
             tools_info = "- get_analytics_report: Get Adobe Analytics report\n- get_comparison_report: Compare data between periods\n"
         
+        current_date_context = self._get_current_date_context()
+        
         return f"""You are an expert analytics query enhancer using MCP servers for Adobe Analytics. Your job is to take user queries about web analytics and enhance them for better analysis.
+
+{current_date_context}
 
 ## Available MCP Tools:
 {tools_info}
@@ -132,37 +151,47 @@ Pay special attention to how the user wants the output formatted:
 
 If no specific format is mentioned, default to "detailed" for comprehensive analysis.
 
+## TIME PERIOD HANDLING - CRITICAL:
+**ALWAYS use the current date context above when interpreting time periods:**
+
+For relative time periods, calculate based on the current date provided:
+- "this month" → use current month and year from the date context
+- "last month" → calculate previous month from current date
+- "this year" → use current year from the date context
+- "yesterday" → calculate from current date
+- "last week" → calculate 7 days before current date
+- "last 30 days" → calculate 30 days before current date
+
+For specific months, use format: "month_year" (e.g., "november_2024", "october_2024")
+
 ## COMPARISON ANALYSIS HANDLING:
 When users ask for comparisons between time periods:
 - Set the primary time_period to the most recent period
 - Set comparison_period to the earlier period for comparison
 - Use specific month names when possible (e.g., "november_2024", "october_2024")
 
-## TIME PERIOD SPECIFICATIONS:
-- For "this month" use: "current_month" or specific month like "november_2024"
-- For "last month" use: "previous_month" or specific month like "october_2024"
-- For "month over month" use both periods
-
 Your task:
 1. Understand the user's intent and clarify ambiguous requests
-2. Identify the most relevant metrics and dimensions from the available schema
-3. Determine appropriate time periods if not specified
-4. **DETECT THE PREFERRED OUTPUT FORMAT** from user language
-5. For comparisons, identify both primary and comparison periods
-6. Enhance the query with analytics best practices
+2. **CRITICALLY IMPORTANT**: Use the current date context to properly interpret relative time periods
+3. Identify the most relevant metrics and dimensions from the available schema
+4. Determine appropriate time periods using the current date as reference
+5. **DETECT THE PREFERRED OUTPUT FORMAT** from user language
+6. For comparisons, identify both primary and comparison periods
+7. Enhance the query with analytics best practices
 
 Guidelines:
 - Use only valid Adobe Analytics metrics and dimensions
 - Limit dimensions to maximum 2 for optimal performance
 - Choose metrics that directly answer the user's question
 - For time-based analysis, consider using date range dimensions
+- **ALWAYS reference the current date context when calculating time periods**
 
 You must respond with a valid JSON object with these exact fields:
 - enhanced_query: string
 - intent: string
 - metrics: array of strings (use valid Adobe Analytics metric IDs)
 - dimensions: array of strings (max 2 elements, use valid dimension IDs)
-- time_period: string
+- time_period: string (calculated using current date context)
 - comparison_period: string (empty if no comparison needed)
 - output_format: string (detected from user query or "detailed" as default)
 - additional_context: string
@@ -170,7 +199,11 @@ You must respond with a valid JSON object with these exact fields:
 Respond with valid JSON only, no additional text or formatting."""
 
     def _get_analysis_system_prompt(self) -> str:
-        return """You are an expert data analyst specializing in web analytics using MCP servers. Your job is to analyze Adobe Analytics data and provide actionable insights in the format preferred by the user.
+        current_date_context = self._get_current_date_context()
+        
+        return f"""You are an expert data analyst specializing in web analytics using MCP servers. Your job is to analyze Adobe Analytics data and provide actionable insights in the format preferred by the user.
+
+{current_date_context}
 
 ## OUTPUT FORMAT GUIDELINES:
 
@@ -217,11 +250,12 @@ Respond with valid JSON only, no additional text or formatting."""
 
 ## Analysis Guidelines:
 1. **FIRST: Identify the requested output format and adapt accordingly**
-2. Analyze the raw data from MCP servers
-3. Identify key patterns, trends, and anomalies
-4. Provide clear, actionable insights in the preferred format
-5. Make data-driven recommendations
-6. Present findings in a business-friendly format
+2. **Use the current date context to provide temporal context in your analysis**
+3. Analyze the raw data from MCP servers
+4. Identify key patterns, trends, and anomalies
+5. Provide clear, actionable insights in the preferred format
+6. Make data-driven recommendations
+7. Present findings in a business-friendly format
 
 ## Multi-Dimensional Analysis:
 - When analyzing cross-dimensional data, look for interaction patterns
@@ -386,9 +420,9 @@ Respond with valid JSON only, no additional text or formatting."""
             
             if not date_result.get("success"):
                 logger.warning("Failed to get current date from MCP server")
-                current_date = "2024-11-20"
+                current_date = datetime.now().strftime("%Y-%m-%d")
             else:
-                current_date = date_result.get("date", "2024-11-20")
+                current_date = date_result.get("date", datetime.now().strftime("%Y-%m-%d"))
             
             validation_result = await asyncio.wait_for(
                 self.mcp_client.validate_schema(enhanced_query.metrics, enhanced_query.dimensions),
@@ -426,7 +460,8 @@ Respond with valid JSON only, no additional text or formatting."""
                         "primary_period": {"start": primary_start, "end": primary_end},
                         "comparison_period": {"start": comparison_start, "end": comparison_end}
                     },
-                    "validation": validation_result
+                    "validation": validation_result,
+                    "current_date_used": current_date
                 }
             else:
                 start_date, end_date = self._parse_time_period(enhanced_query.time_period, current_date)
@@ -453,7 +488,8 @@ Respond with valid JSON only, no additional text or formatting."""
                         "start_date": start_date,
                         "end_date": end_date
                     },
-                    "validation": validation_result
+                    "validation": validation_result,
+                    "current_date_used": current_date
                 }
             
         except asyncio.TimeoutError:
@@ -476,12 +512,14 @@ Respond with valid JSON only, no additional text or formatting."""
         try:
             is_comparison = raw_data.get("analysis_type") == "comparison"
             output_format = raw_data.get("output_format", "detailed")
+            current_date_used = raw_data.get("current_date_used", datetime.now().strftime("%Y-%m-%d"))
             
             mcp_result = raw_data.get("mcp_result", {})
             
             if is_comparison:
                 analysis_context = f"""Analysis Type: Comparison Analysis via MCP Server
 Output Format Requested: {output_format}
+Current Date Reference: {current_date_used}
 MCP Server Response Success: {mcp_result.get('success', False)}
 Query Parameters: {json.dumps(raw_data.get('query_params', {}), indent=2)}
 
@@ -493,6 +531,7 @@ CRITICAL: User requested "{output_format}" format - adapt your response accordin
             else:
                 analysis_context = f"""Analysis Type: {raw_data.get('analysis_type', 'unknown')} via MCP Server
 Output Format Requested: {output_format}
+Current Date Reference: {current_date_used}
 MCP Server Response Success: {mcp_result.get('success', False)}
 Query Parameters: {json.dumps(raw_data.get('query_params', {}), indent=2)}
 

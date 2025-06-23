@@ -88,7 +88,6 @@ DIMENSIONS = [
     "variables/exitpage", "variables/language", "variables/visitnumber",
 ]
 
-# Cache for access tokens
 _token_cache = {"token": None, "expires_at": None}
 
 @app.middleware("http")
@@ -106,7 +105,6 @@ async def security_middleware(request: Request, call_next):
 def get_access_token() -> str:
     current_time = datetime.now()
     
-    # Check if we have a valid cached token
     if (_token_cache["token"] and _token_cache["expires_at"] and 
         current_time < _token_cache["expires_at"]):
         return _token_cache["token"]
@@ -128,7 +126,6 @@ def get_access_token() -> str:
         access_token = token_data["access_token"]
         expires_in = token_data.get("expires_in", 3600)
         
-        # Cache the token with expiration time (subtract 5 minutes for safety)
         _token_cache["token"] = access_token
         _token_cache["expires_at"] = current_time + timedelta(seconds=expires_in - 300)
         
@@ -435,7 +432,7 @@ MCP_TOOLS = [
     ),
     MCPTool(
         name="get_current_date",
-        description="Get current server date in ISO format",
+        description="Get current server date and time in ISO format",
         input_schema={"type": "object", "properties": {}, "required": []},
     ),
 ]
@@ -574,9 +571,17 @@ async def handle_mcp_request(request: MCPRequest) -> MCPResponse:
                 )
 
             elif tool_name == "get_current_date":
+                current_datetime = datetime.now()
                 result = {
                     "success": True,
-                    "date": date.today().isoformat(),
+                    "date": current_datetime.strftime("%Y-%m-%d"),
+                    "datetime": current_datetime.strftime("%Y-%m-%d %H:%M:%S"),
+                    "iso_datetime": current_datetime.isoformat(),
+                    "year": current_datetime.year,
+                    "month": current_datetime.month,
+                    "month_name": current_datetime.strftime("%B"),
+                    "day": current_datetime.day,
+                    "day_of_week": current_datetime.strftime("%A"),
                     "server_type": "mcp_adobe_analytics",
                 }
 
@@ -618,6 +623,7 @@ async def health_check():
     except Exception as e:
         adobe_status = f"error: {str(e)}"
 
+    current_datetime = datetime.now()
     return {
         "status": "healthy",
         "server_type": "mcp_adobe_analytics",
@@ -625,6 +631,8 @@ async def health_check():
         "tools_available": len(MCP_TOOLS),
         "adobe_analytics_status": adobe_status,
         "security": "internal_access_only",
+        "current_date": current_datetime.strftime("%Y-%m-%d"),
+        "current_datetime": current_datetime.strftime("%Y-%m-%d %H:%M:%S"),
     }
 
 @app.get("/tools")

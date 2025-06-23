@@ -2,6 +2,7 @@ import os
 import json
 import logging
 import asyncio
+from datetime import datetime
 from typing import List
 from openai.types.chat.chat_completion_message_param import ChatCompletionMessageParam
 from pydantic import BaseModel
@@ -14,7 +15,6 @@ from .utils.mcp_pipeline import MCPAnalyticsPipeline
 
 load_dotenv(".env.local")
 
-# Enhanced logging configuration
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s:%(lineno)d - %(message)s",
@@ -29,7 +29,7 @@ llm_model = "openai/gpt-4.1-mini"
 client = OpenAI(
     api_key=os.environ.get("OPENROUTER_API_KEY"),
     base_url="https://openrouter.ai/api/v1",
-    timeout=60.0,  # Increased timeout
+    timeout=60.0,
 )
 
 mcp_server_url = os.environ.get("MCP_SERVER_URL", "http://localhost:8001")
@@ -41,6 +41,20 @@ mcp_pipeline = MCPAnalyticsPipeline(
 
 class Request(BaseModel):
     messages: List[ClientMessage]
+
+def get_current_datetime_info():
+    """Get current date and time information for LLM context"""
+    now = datetime.now()
+    return {
+        "current_date": now.strftime("%Y-%m-%d"),
+        "current_datetime": now.strftime("%Y-%m-%d %H:%M:%S"),
+        "current_year": now.year,
+        "current_month": now.strftime("%B"),
+        "current_month_num": now.month,
+        "current_day": now.day,
+        "day_of_week": now.strftime("%A"),
+        "iso_date": now.isoformat()
+    }
 
 def get_tools_def():
     return [
@@ -76,7 +90,7 @@ async def analyze_with_mcp(user_query: str) -> dict:
     try:
         result = await asyncio.wait_for(
             mcp_pipeline.process_query(user_query),
-            timeout=120.0  # 2 minute timeout
+            timeout=120.0
         )
         logger.info("MCP analysis completed successfully")
         return result
@@ -154,7 +168,6 @@ def stream_text(messages: List[ChatCompletionMessageParam], protocol: str = "dat
                             logger.info(f"Executing tool: {call['name']}")
                             yield f"9:{{\"toolCallId\":\"{call['id']}\",\"toolName\":\"{call['name']}\",\"args\":{call['arguments']}}}\n"
 
-                        # Process tool calls with proper async handling
                         loop = asyncio.new_event_loop()
                         asyncio.set_event_loop(loop)
                         
@@ -206,7 +219,6 @@ def stream_text(messages: List[ChatCompletionMessageParam], protocol: str = "dat
                 logger.error(f"Error processing chunk: {str(chunk_error)}")
                 continue
 
-        # Final usage information
         if hasattr(chunk, 'usage') and chunk.usage:
             usage = chunk.usage
             yield (
@@ -230,11 +242,30 @@ async def handle_chat_data(request: Request, protocol: str = Query("data")):
     logger.info(f"Received chat request with {len(request.messages)} messages")
     
     try:
+        # Get current date/time information
+        datetime_info = get_current_datetime_info()
+        
         system_msg = {
             "role": "system",
             "content": f"""{PROMPT}
 
-You now have access to a powerful MCP (Model Context Protocol) based analytics system:
+## CURRENT DATE AND TIME CONTEXT:
+**CRITICAL: Always use this current date information for all time-based queries and calculations:**
+
+- **Current Date**: {datetime_info['current_date']}
+- **Current Year**: {datetime_info['current_year']}
+- **Current Month**: {datetime_info['current_month']} ({datetime_info['current_month_num']})
+- **Current Day**: {datetime_info['current_day']}
+- **Day of Week**: {datetime_info['day_of_week']}
+- **Full DateTime**: {datetime_info['current_datetime']}
+
+**IMPORTANT TIME REFERENCE RULES:**
+- When users say "this month", use {datetime_info['current_month']} {datetime_info['current_year']}
+- When users say "last month", calculate the previous month from {datetime_info['current_date']}
+- When users say "this year", use {datetime_info['current_year']}
+- When users say "yesterday", calculate from {datetime_info['current_date']}
+- When users say "last week", calculate the previous 7 days from {datetime_info['current_date']}
+- Always ensure date calculations are relative to {datetime_info['current_date']}
 
 ## MCP Integration Benefits:
 - **Modular Architecture**: Analytics tools are deployed as separate MCP servers
@@ -247,15 +278,17 @@ You now have access to a powerful MCP (Model Context Protocol) based analytics s
 2. **get_mcp_server_status**: Check MCP server health and available tools
 
 ## MCP Pipeline Stages:
-1. **Stage 1 - Query Enhancement**: Clarifies and structures user queries
-2. **Stage 2 - MCP Data Retrieval**: Fetches data via MCP servers
+1. **Stage 1 - Query Enhancement**: Clarifies and structures user queries with proper date context
+2. **Stage 2 - MCP Data Retrieval**: Fetches data via MCP servers using correct date ranges
 3. **Stage 3 - Analysis**: Generates insights and recommendations
 
 When users ask analytics questions, use the `analyze_with_mcp` function which will:
-- Process queries through MCP servers for better reliability
-- Handle complex analytics operations independently
-- Provide comprehensive insights with proper error handling
+- Process queries through MCP servers with accurate date context
+- Handle complex analytics operations with proper time calculations
+- Provide comprehensive insights with correct temporal references
 - Support real-time streaming of analysis progress
+
+**REMEMBER**: Always reference the current date context above when interpreting user queries about time periods.
 
 MCP Server URL: {mcp_server_url}""",
         }
@@ -271,7 +304,7 @@ MCP Server URL: {mcp_server_url}""",
         
         openai_messages.insert(0, system_msg)
         
-        logger.info(f"Processing {len(openai_messages)} messages (including system)")
+        logger.info(f"Processing {len(openai_messages)} messages with current date: {datetime_info['current_date']}")
         
         response = StreamingResponse(
             stream_text(openai_messages, protocol),
