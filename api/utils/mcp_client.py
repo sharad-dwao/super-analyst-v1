@@ -112,14 +112,63 @@ class MCPClient:
             if content and len(content) > 0:
                 try:
                     result_text = content[0].get("text", "{}")
-                    result_data = json.loads(result_text)
-                    logger.info(f"Tool {tool_name} executed successfully")
-                    return result_data
+                    
+                    # Enhanced JSON parsing with better error handling
+                    if isinstance(result_text, str):
+                        # Clean the text first - remove any extra whitespace or characters
+                        result_text = result_text.strip()
+                        
+                        # Try to find JSON content if it's embedded in other text
+                        if not result_text.startswith('{') and not result_text.startswith('['):
+                            # Look for JSON content within the text
+                            start_idx = result_text.find('{')
+                            if start_idx == -1:
+                                start_idx = result_text.find('[')
+                            
+                            if start_idx != -1:
+                                # Find the matching closing bracket
+                                bracket_count = 0
+                                end_idx = -1
+                                start_char = result_text[start_idx]
+                                end_char = '}' if start_char == '{' else ']'
+                                
+                                for i in range(start_idx, len(result_text)):
+                                    if result_text[i] == start_char:
+                                        bracket_count += 1
+                                    elif result_text[i] == end_char:
+                                        bracket_count -= 1
+                                        if bracket_count == 0:
+                                            end_idx = i + 1
+                                            break
+                                
+                                if end_idx != -1:
+                                    result_text = result_text[start_idx:end_idx]
+                        
+                        # Parse the cleaned JSON
+                        result_data = json.loads(result_text)
+                        logger.info(f"Tool {tool_name} executed successfully")
+                        return result_data
+                    else:
+                        # If it's already a dict/object, return as is
+                        logger.info(f"Tool {tool_name} executed successfully (non-string result)")
+                        return result_text
+                        
                 except json.JSONDecodeError as e:
-                    logger.warning(f"Failed to parse tool result as JSON: {e}")
+                    logger.warning(f"Failed to parse tool result as JSON for {tool_name}: {e}")
+                    logger.warning(f"Raw result text: {repr(result_text)}")
+                    
+                    # Return the raw content if JSON parsing fails
+                    return {
+                        "result": result_text,
+                        "success": True,
+                        "warning": "Result was not valid JSON, returned as raw text"
+                    }
+                except Exception as e:
+                    logger.error(f"Unexpected error parsing tool result for {tool_name}: {e}")
                     return {
                         "result": content,
-                        "success": True
+                        "success": True,
+                        "warning": f"Error parsing result: {str(e)}"
                     }
             else:
                 logger.warning(f"No content in tool response for {tool_name}")
@@ -149,9 +198,19 @@ class MCPClient:
                 )
                 response.raise_for_status()
                 
-                response_data = response.json()
-                return MCPResponse(**response_data)
-                
+                # Enhanced response parsing with better error handling
+                try:
+                    response_text = response.text
+                    logger.debug(f"Raw MCP response: {response_text[:500]}...")  # Log first 500 chars
+                    
+                    response_data = response.json()
+                    return MCPResponse(**response_data)
+                    
+                except json.JSONDecodeError as e:
+                    logger.error(f"Failed to parse MCP server response as JSON: {e}")
+                    logger.error(f"Raw response: {response_text}")
+                    raise ValueError(f"Invalid JSON response from MCP server: {e}")
+                    
             except httpx.HTTPError as e:
                 logger.error(f"HTTP error communicating with MCP server (attempt {attempt + 1}): {str(e)}")
                 if attempt == max_retries - 1:
