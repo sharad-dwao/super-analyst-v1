@@ -35,7 +35,7 @@ class ClientMessage(BaseModel):
     toolInvocations: Optional[List[ToolInvocation]] = None
 
 
-def prompt_enhance(client, llm_model, user_message):
+async def prompt_enhance(client, llm_model, user_message):
     original_text = user_message.content
     enhance_prompt = [
         {
@@ -49,8 +49,10 @@ def prompt_enhance(client, llm_model, user_message):
         {"role": "user", "content": original_text},
     ]
 
-    response = client.chat.completions.create(
-        model=llm_model, messages=enhance_prompt, temperature=0.7
+    response = await client.chat.completions.create(
+        model=llm_model,
+        messages=enhance_prompt,
+        temperature=0.7,
     )
 
     enhanced_prompt = response.choices[0].message.content.strip()
