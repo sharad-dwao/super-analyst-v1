@@ -68,7 +68,6 @@ def convert_to_openai_messages(
     openai_messages = []
 
     for message in messages:
-        # Handle content parts
         parts = []
         parts.append({"type": "text", "text": message.content})
 
@@ -87,11 +86,9 @@ def convert_to_openai_messages(
             "content": parts,
         }
 
-        # Process tool invocations if they exist
+        # Only add tool_calls if there are actual CALL state tool invocations
         if message.toolInvocations:
-            # Separate tool calls from tool results
             tool_calls = []
-            tool_results = []
             
             for toolInvocation in message.toolInvocations:
                 if toolInvocation.state == ToolInvocationState.CALL:
@@ -103,45 +100,25 @@ def convert_to_openai_messages(
                             "arguments": json.dumps(toolInvocation.args),
                         },
                     })
-                elif toolInvocation.state == ToolInvocationState.RESULT:
-                    tool_results.append(toolInvocation)
             
-            # If this message has tool calls, add them to the message
+            # Only add tool_calls if there are actual tool calls
             if tool_calls:
                 message_dict["tool_calls"] = tool_calls
-                openai_messages.append(message_dict)
-                
-                # Then add tool result messages
-                for tool_result in tool_results:
+            
+            # Add the message
+            openai_messages.append(message_dict)
+            
+            # Add tool result messages separately
+            for toolInvocation in message.toolInvocations:
+                if toolInvocation.state == ToolInvocationState.RESULT:
                     tool_message = {
                         "role": "tool",
-                        "tool_call_id": tool_result.toolCallId,
-                        "content": json.dumps(tool_result.result),
+                        "tool_call_id": toolInvocation.toolCallId,
+                        "content": json.dumps(toolInvocation.result),
                     }
                     openai_messages.append(tool_message)
-            else:
-                # If no tool calls but there are results, this is likely an error state
-                # Just add the regular message without tool information
-                if tool_results:
-                    logger.warning(f"Found tool results without tool calls in message: {message.role}")
-                openai_messages.append(message_dict)
         else:
             # No tool invocations, just add the regular message
             openai_messages.append(message_dict)
 
-    # Final validation: ensure no tool messages exist without preceding tool_calls
-    validated_messages = []
-    last_message_had_tool_calls = False
-    
-    for i, msg in enumerate(openai_messages):
-        if msg["role"] == "tool":
-            if not last_message_had_tool_calls:
-                logger.warning(f"Skipping orphaned tool message at index {i}: {msg.get('tool_call_id', 'unknown')}")
-                continue
-        
-        validated_messages.append(msg)
-        last_message_had_tool_calls = msg.get("tool_calls") is not None
-
-    logger.debug(f"Converted {len(messages)} client messages to {len(validated_messages)} OpenAI messages")
-    
-    return validated_messages
+    return openai_messages
