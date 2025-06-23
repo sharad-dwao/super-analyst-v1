@@ -21,10 +21,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 app = FastAPI(
-    title="Adobe Analytics MCP Server", 
-    version="1.0.0", 
-    docs_url=None, 
-    redoc_url=None
+    title="Adobe Analytics MCP Server", version="1.0.0", docs_url=None, redoc_url=None
 )
 
 ALLOWED_ORIGINS = [
@@ -51,44 +48,91 @@ if not all(required_env_vars):
     logger.error("Missing required Adobe Analytics environment variables")
     raise ValueError("Missing required Adobe Analytics environment variables")
 
+
 class MCPRequest(BaseModel):
     method: str = Field(description="MCP method name")
     params: Dict[str, Any] = Field(description="Method parameters")
     id: Optional[str] = Field(default=None, description="Request ID")
 
+
 class MCPResponse(BaseModel):
-    result: Optional[Dict[str, Any]] = Field(default=None, description="Response result")
-    error: Optional[Dict[str, Any]] = Field(default=None, description="Error information")
+    result: Optional[Dict[str, Any]] = Field(
+        default=None, description="Response result"
+    )
+    error: Optional[Dict[str, Any]] = Field(
+        default=None, description="Error information"
+    )
     id: Optional[str] = Field(default=None, description="Request ID")
+
 
 class MCPTool(BaseModel):
     name: str = Field(description="Tool name")
     description: str = Field(description="Tool description")
     input_schema: Dict[str, Any] = Field(description="JSON schema for tool input")
 
+
 METRICS = [
-    "metrics/visits", "metrics/visitors", "metrics/pageviews", "metrics/bounces",
-    "metrics/bouncerate", "metrics/entries", "metrics/exits", "metrics/orders",
-    "metrics/revenue", "metrics/conversionrate", "metrics/averagetimespentonsite",
-    "metrics/averagetimespentonpage", "metrics/averagevisitdepth", "metrics/units",
-    "metrics/carts", "metrics/cartadditions", "metrics/cartremovals", "metrics/cartviews",
-    "metrics/checkouts", "metrics/occurrences", "metrics/singlepagevisits",
-    "metrics/reloads", "metrics/timespent", "metrics/campaigninstances", "metrics/clickthroughs",
+    "metrics/visits",
+    "metrics/visitors",
+    "metrics/pageviews",
+    "metrics/bounces",
+    "metrics/bouncerate",
+    "metrics/entries",
+    "metrics/exits",
+    "metrics/orders",
+    "metrics/revenue",
+    "metrics/conversionrate",
+    "metrics/averagetimespentonsite",
+    "metrics/averagetimespentonpage",
+    "metrics/averagevisitdepth",
+    "metrics/units",
+    "metrics/carts",
+    "metrics/cartadditions",
+    "metrics/cartremovals",
+    "metrics/cartviews",
+    "metrics/checkouts",
+    "metrics/occurrences",
+    "metrics/singlepagevisits",
+    "metrics/reloads",
+    "metrics/timespent",
+    "metrics/campaigninstances",
+    "metrics/clickthroughs",
 ]
 
 DIMENSIONS = [
-    "variables/page", "variables/pagename", "variables/pageurl", "variables/sitesection",
-    "variables/referrer", "variables/referrertype", "variables/referringdomain",
-    "variables/campaign", "variables/geocountry", "variables/georegion", "variables/geocity",
-    "variables/browser", "variables/browsertype", "variables/operatingsystem",
-    "variables/mobiledevicetype", "variables/mobiledevicename", "variables/marketingchannel",
-    "variables/marketingchanneldetail", "variables/daterangemonth", "variables/daterangeweek",
-    "variables/daterangeday", "variables/daterangeyear", "variables/daterangequarter",
-    "variables/searchengine", "variables/searchenginekeyword", "variables/entrypage",
-    "variables/exitpage", "variables/language", "variables/visitnumber",
+    "variables/page",
+    "variables/pagename",
+    "variables/pageurl",
+    "variables/sitesection",
+    "variables/referrer",
+    "variables/referrertype",
+    "variables/referringdomain",
+    "variables/campaign",
+    "variables/geocountry",
+    "variables/georegion",
+    "variables/geocity",
+    "variables/browser",
+    "variables/browsertype",
+    "variables/operatingsystem",
+    "variables/mobiledevicetype",
+    "variables/mobiledevicename",
+    "variables/marketingchannel",
+    "variables/marketingchanneldetail",
+    "variables/daterangemonth",
+    "variables/daterangeweek",
+    "variables/daterangeday",
+    "variables/daterangeyear",
+    "variables/daterangequarter",
+    "variables/searchengine",
+    "variables/searchenginekeyword",
+    "variables/entrypage",
+    "variables/exitpage",
+    "variables/language",
+    "variables/visitnumber",
 ]
 
 _token_cache = {"token": None, "expires_at": None}
+
 
 @app.middleware("http")
 async def security_middleware(request: Request, call_next):
@@ -97,18 +141,24 @@ async def security_middleware(request: Request, call_next):
 
     if client_host not in allowed_hosts:
         logger.warning(f"Blocked external access attempt from: {client_host}")
-        raise HTTPException(status_code=403, detail="Access forbidden - internal use only")
+        raise HTTPException(
+            status_code=403, detail="Access forbidden - internal use only"
+        )
 
     response = await call_next(request)
     return response
 
+
 def get_access_token() -> str:
     current_time = datetime.now()
-    
-    if (_token_cache["token"] and _token_cache["expires_at"] and 
-        current_time < _token_cache["expires_at"]):
+
+    if (
+        _token_cache["token"]
+        and _token_cache["expires_at"]
+        and current_time < _token_cache["expires_at"]
+    ):
         return _token_cache["token"]
-    
+
     try:
         url = "https://ims-na1.adobelogin.com/ims/token/v3"
         payload = (
@@ -118,25 +168,28 @@ def get_access_token() -> str:
             "%2Ctarget_sdk%2Cread_organizations%2Cadditional_info.roles"
         )
         headers = {"Content-Type": "application/x-www-form-urlencoded"}
-        
+
         resp = requests.post(url, headers=headers, data=payload, timeout=15)
         resp.raise_for_status()
-        
+
         token_data = resp.json()
         access_token = token_data["access_token"]
         expires_in = token_data.get("expires_in", 3600)
-        
+
         _token_cache["token"] = access_token
         _token_cache["expires_at"] = current_time + timedelta(seconds=expires_in - 300)
-        
+
         logger.info("Adobe Analytics access token refreshed")
         return access_token
-        
+
     except Exception as e:
         logger.error(f"Failed to get Adobe Analytics access token: {str(e)}")
         raise
 
-def validate_metrics_dimensions(metrics: List[str], dimensions: List[str]) -> Dict[str, Any]:
+
+def validate_metrics_dimensions(
+    metrics: List[str], dimensions: List[str]
+) -> Dict[str, Any]:
     valid_metrics = []
     invalid_metrics = []
 
@@ -173,6 +226,7 @@ def validate_metrics_dimensions(metrics: List[str], dimensions: List[str]) -> Di
         "valid_dimensions": valid_dimensions or ["variables/page"],
         "invalid_dimensions": invalid_dimensions,
     }
+
 
 def get_analytics_report(
     metrics: List[str],
@@ -234,7 +288,9 @@ def get_analytics_report(
 
         url = f"https://analytics.adobe.io/api/{COMPANY_ID}/reports"
 
-        logger.info(f"Adobe Analytics request: {len(clean_metrics)} metrics, {len(clean_dimensions)} dimensions")
+        logger.info(
+            f"Adobe Analytics request: {len(clean_metrics)} metrics, {len(clean_dimensions)} dimensions"
+        )
         res = requests.post(url, headers=headers, json=body, timeout=45)
         res.raise_for_status()
 
@@ -271,6 +327,7 @@ def get_analytics_report(
         logger.error(f"Unexpected error in get_analytics_report: {error_details}")
         return error_details
 
+
 def parse_time_period(time_period: str, current_date: str) -> tuple[str, str]:
     try:
         current = datetime.fromisoformat(current_date)
@@ -281,29 +338,54 @@ def parse_time_period(time_period: str, current_date: str) -> tuple[str, str]:
     if "_" in time_period and any(
         month in time_period.lower()
         for month in [
-            "january", "february", "march", "april", "may", "june",
-            "july", "august", "september", "october", "november", "december",
+            "january",
+            "february",
+            "march",
+            "april",
+            "may",
+            "june",
+            "july",
+            "august",
+            "september",
+            "october",
+            "november",
+            "december",
         ]
     ):
         try:
             month_name, year = time_period.lower().split("_")
             year = int(year)
             month_num = {
-                "january": 1, "february": 2, "march": 3, "april": 4,
-                "may": 5, "june": 6, "july": 7, "august": 8,
-                "september": 9, "october": 10, "november": 11, "december": 12,
+                "january": 1,
+                "february": 2,
+                "march": 3,
+                "april": 4,
+                "may": 5,
+                "june": 6,
+                "july": 7,
+                "august": 8,
+                "september": 9,
+                "october": 10,
+                "november": 11,
+                "december": 12,
             }[month_name]
 
             first_day = datetime(year, month_num, 1)
-            last_day = datetime(year, month_num, calendar.monthrange(year, month_num)[1])
+            last_day = datetime(
+                year, month_num, calendar.monthrange(year, month_num)[1]
+            )
 
             return first_day.strftime("%Y-%m-%d"), last_day.strftime("%Y-%m-%d")
         except (ValueError, KeyError) as e:
-            logger.warning(f"Could not parse specific month format: {time_period}, error: {e}")
+            logger.warning(
+                f"Could not parse specific month format: {time_period}, error: {e}"
+            )
 
     if "current_month" in time_period.lower() or "this month" in time_period.lower():
         first_day = current.replace(day=1)
-        last_day = current.replace(day=calendar.monthrange(current.year, current.month)[1])
+        last_day = current.replace(
+            day=calendar.monthrange(current.year, current.month)[1]
+        )
         return first_day.strftime("%Y-%m-%d"), last_day.strftime("%Y-%m-%d")
 
     if "previous_month" in time_period.lower() or "last month" in time_period.lower():
@@ -311,7 +393,9 @@ def parse_time_period(time_period: str, current_date: str) -> tuple[str, str]:
         last_of_previous = first_of_current - timedelta(days=1)
         first_of_previous = last_of_previous.replace(day=1)
 
-        return first_of_previous.strftime("%Y-%m-%d"), last_of_previous.strftime("%Y-%m-%d")
+        return first_of_previous.strftime("%Y-%m-%d"), last_of_previous.strftime(
+            "%Y-%m-%d"
+        )
 
     if "yesterday" in time_period.lower():
         date_obj = current - timedelta(days=1)
@@ -331,6 +415,7 @@ def parse_time_period(time_period: str, current_date: str) -> tuple[str, str]:
     else:
         date_obj = current - timedelta(days=1)
         return date_obj.strftime("%Y-%m-%d"), date_obj.strftime("%Y-%m-%d")
+
 
 MCP_TOOLS = [
     MCPTool(
@@ -405,8 +490,12 @@ MCP_TOOLS = [
                 },
             },
             "required": [
-                "metrics", "dimensions", "primary_start", "primary_end",
-                "comparison_start", "comparison_end",
+                "metrics",
+                "dimensions",
+                "primary_start",
+                "primary_end",
+                "comparison_start",
+                "comparison_end",
             ],
         },
     ),
@@ -437,6 +526,7 @@ MCP_TOOLS = [
     ),
 ]
 
+
 @app.post("/mcp")
 async def handle_mcp_request(request: MCPRequest) -> MCPResponse:
     try:
@@ -444,8 +534,7 @@ async def handle_mcp_request(request: MCPRequest) -> MCPResponse:
 
         if request.method == "tools/list":
             return MCPResponse(
-                result={"tools": [tool.dict() for tool in MCP_TOOLS]}, 
-                id=request.id
+                result={"tools": [tool.dict() for tool in MCP_TOOLS]}, id=request.id
             )
 
         elif request.method == "tools/call":
@@ -485,8 +574,12 @@ async def handle_mcp_request(request: MCPRequest) -> MCPResponse:
 
             elif tool_name == "get_comparison_report":
                 required_args = [
-                    "metrics", "dimensions", "primary_start", "primary_end",
-                    "comparison_start", "comparison_end",
+                    "metrics",
+                    "dimensions",
+                    "primary_start",
+                    "primary_end",
+                    "comparison_start",
+                    "comparison_end",
                 ]
                 missing_args = [arg for arg in required_args if arg not in arguments]
                 if missing_args:
@@ -615,6 +708,7 @@ async def handle_mcp_request(request: MCPRequest) -> MCPResponse:
             id=request.id,
         )
 
+
 @app.get("/health")
 async def health_check():
     try:
@@ -635,6 +729,7 @@ async def health_check():
         "current_datetime": current_datetime.strftime("%Y-%m-%d %H:%M:%S"),
     }
 
+
 @app.get("/tools")
 async def list_tools():
     return {
@@ -642,6 +737,7 @@ async def list_tools():
         "server_type": "mcp_adobe_analytics",
         "total_tools": len(MCP_TOOLS),
     }
+
 
 @app.on_event("startup")
 async def startup_event():
@@ -655,6 +751,8 @@ async def startup_event():
 
     logger.info(f"MCP Server started with {len(MCP_TOOLS)} tools available")
 
+
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(app, host="127.0.0.1", port=8001)
