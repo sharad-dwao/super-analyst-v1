@@ -42,7 +42,7 @@ class MCPAnalyticsPipeline:
     ):
         # Fixed: Changed to correct model name
         self.llm = ChatOpenAI(
-            model="openai/gpt-4o-mini",
+            model="openai/gpt-4.1-mini",
             api_key=openai_api_key,
             base_url=base_url,
             temperature=0.1,

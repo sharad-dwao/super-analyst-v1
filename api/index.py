@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI()
 
-llm_model = "openai/gpt-4o-mini"  # Fixed: Changed from non-existent gpt-4.1-mini
+llm_model = "openai/gpt-4.1-mini"  # Fixed: Changed from non-existent gpt-4.1-mini
 
 client = AsyncOpenAI(
     api_key=os.environ.get("OPENROUTER_API_KEY"),
