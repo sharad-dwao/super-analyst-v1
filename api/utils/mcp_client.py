@@ -2,6 +2,8 @@ import json
 import logging
 import asyncio
 from typing import Dict, Any, List, Optional
+from urllib.parse import urlparse
+
 import httpx
 from pydantic import BaseModel, Field
 
@@ -23,22 +25,29 @@ class MCPTool(BaseModel):
     input_schema: Dict[str, Any] = Field(description="JSON schema for tool input")
 
 class MCPClient:
-    def __init__(self, server_url: str, timeout: int = 30):
+    def __init__(self, server_url: str, timeout: int = 30, verify: bool = True):
         if not self._is_internal_url(server_url):
             raise ValueError(f"MCP server URL must be internal: {server_url}")
-        
+
         self.server_url = server_url.rstrip('/')
         self.timeout = timeout
+        self.verify = verify
         self.session = None
         
     def _is_internal_url(self, url: str) -> bool:
-        internal_hosts = ["localhost", "127.0.0.1", "::1"]
-        return any(host in url for host in internal_hosts)
+        allowed_hosts = {"localhost", "127.0.0.1", "::1"}
+        try:
+            parsed = urlparse(url)
+        except Exception:
+            return False
+
+        host = parsed.hostname
+        return host in allowed_hosts if host else False
         
     async def __aenter__(self):
         self.session = httpx.AsyncClient(
             timeout=httpx.Timeout(self.timeout, connect=10.0),
-            verify=False,
+            verify=self.verify,
             limits=httpx.Limits(max_keepalive_connections=5, max_connections=10)
         )
         return self
@@ -222,7 +231,7 @@ class AdobeAnalyticsMCPClient:
     
     async def health_check(self) -> Dict[str, Any]:
         try:
-            async with httpx.AsyncClient(timeout=10) as client:
+            async with httpx.AsyncClient(timeout=10, verify=self.client.verify) as client:
                 response = await client.get(f"{self.server_url}/health")
                 response.raise_for_status()
                 return response.json()
