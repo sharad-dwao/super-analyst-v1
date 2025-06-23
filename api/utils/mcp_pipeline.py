@@ -1,6 +1,5 @@
 """
 MCP-based Analytics Pipeline
-Replaces LangChain pipeline with MCP server integration
 SECURITY: Only communicates with internal MCP servers
 """
 
@@ -13,7 +12,6 @@ from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 from .mcp_client import AdobeAnalyticsMCPClient, MCPTool
 
-# Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -23,7 +21,6 @@ logger = logging.getLogger(__name__)
 
 
 class AnalyticsQuery(BaseModel):
-    """Structured analytics query after enhancement"""
     enhanced_query: str = Field(description="Enhanced and clarified user query")
     intent: str = Field(description="Primary intent of the query")
     metrics: List[str] = Field(description="List of relevant metrics to analyze")
@@ -35,7 +32,6 @@ class AnalyticsQuery(BaseModel):
 
 
 class AnalyticsResult(BaseModel):
-    """Final analytics result with insights"""
     summary: str = Field(description="Executive summary of findings")
     key_insights: List[str] = Field(description="List of key insights")
     data_analysis: str = Field(description="Detailed analysis of the data")
@@ -55,7 +51,6 @@ class MCPAnalyticsPipeline:
             streaming=True
         )
         
-        # SECURITY: Validate MCP server URL is internal
         if not self._is_internal_url(mcp_server_url):
             raise ValueError(f"MCP server URL must be internal: {mcp_server_url}")
         
@@ -71,12 +66,10 @@ class MCPAnalyticsPipeline:
     async def initialize(self):
         """Initialize the pipeline and discover available tools"""
         try:
-            # Check MCP server health first
             health = await self.mcp_client.health_check()
             if health.get("status") != "healthy":
                 logger.warning(f"MCP server health check failed: {health}")
             
-            # Discover available tools
             self.available_tools = await self.mcp_client.list_available_tools()
             logger.info(f"Initialized MCP pipeline with {len(self.available_tools)} tools")
             
@@ -96,7 +89,7 @@ class MCPAnalyticsPipeline:
         if not tools_info:
             tools_info = "- get_analytics_report: Get Adobe Analytics report\n- get_comparison_report: Compare data between periods\n"
         
-        return f"""You are an expert analytics query enhancer using MCP (Model Context Protocol) servers for Adobe Analytics. Your job is to take user queries about web analytics and enhance them for better analysis.
+        return f"""You are an expert analytics query enhancer using MCP servers for Adobe Analytics. Your job is to take user queries about web analytics and enhance them for better analysis.
 
 ## Available MCP Tools:
 {tools_info}
@@ -260,19 +253,15 @@ Respond with valid JSON only, no additional text or formatting."""
         try:
             logger.info(f"Starting MCP-based analysis for query: {user_query}")
             
-            # Initialize if not already done
             if not self.available_tools:
                 await self.initialize()
             
-            # Stage 1: Query Enhancement
             logger.info("Stage 1: Enhancing query...")
             enhanced_query_data = await self._enhance_query(user_query)
             
-            # Stage 2: Data Retrieval via MCP
             logger.info("Stage 2: Retrieving analytics data via MCP...")
             raw_data = await self._get_analytics_data_mcp(enhanced_query_data)
             
-            # Stage 3: Analysis and Insights
             logger.info("Stage 3: Analyzing data and generating insights...")
             final_result = await self._analyze_data(enhanced_query_data, raw_data)
             
@@ -317,7 +306,6 @@ Respond with valid JSON only, no additional text or formatting."""
             
             result_dict = self._extract_json_from_response(content)
             
-            # Validate and clean the result
             result_dict = self._validate_enhancement_result(result_dict)
             
             return AnalyticsQuery(**result_dict)
@@ -337,7 +325,6 @@ Respond with valid JSON only, no additional text or formatting."""
 
     def _validate_enhancement_result(self, result_dict: Dict) -> Dict:
         """Validate and clean enhancement result"""
-        # Ensure required fields exist
         required_fields = ["enhanced_query", "intent", "metrics", "dimensions", "time_period", "output_format"]
         for field in required_fields:
             if field not in result_dict:
@@ -351,23 +338,19 @@ Respond with valid JSON only, no additional text or formatting."""
                 else:
                     result_dict[field] = ""
         
-        # Ensure metrics and dimensions are lists
         if not isinstance(result_dict["metrics"], list):
             result_dict["metrics"] = [result_dict["metrics"]] if result_dict["metrics"] else ["metrics/visits"]
         
         if not isinstance(result_dict["dimensions"], list):
             result_dict["dimensions"] = [result_dict["dimensions"]] if result_dict["dimensions"] else ["variables/page"]
         
-        # Limit dimensions to 2
         if len(result_dict["dimensions"]) > 2:
             result_dict["dimensions"] = result_dict["dimensions"][:2]
             logger.info("Limited dimensions to 2 for optimal performance")
         
-        # Ensure comparison_period exists
         if "comparison_period" not in result_dict:
             result_dict["comparison_period"] = ""
         
-        # Ensure additional_context exists
         if "additional_context" not in result_dict:
             result_dict["additional_context"] = ""
         
@@ -376,15 +359,13 @@ Respond with valid JSON only, no additional text or formatting."""
     async def _get_analytics_data_mcp(self, enhanced_query: AnalyticsQuery) -> Dict[str, Any]:
         """Stage 2: Retrieve data via MCP servers"""
         try:
-            # Get current date from MCP server
             date_result = await self.mcp_client.get_current_date()
             if not date_result.get("success"):
                 logger.warning("Failed to get current date from MCP server")
-                current_date = "2024-11-20"  # Fallback
+                current_date = "2024-11-20"
             else:
                 current_date = date_result.get("date", "2024-11-20")
             
-            # Validate schema via MCP
             validation_result = await self.mcp_client.validate_schema(
                 enhanced_query.metrics,
                 enhanced_query.dimensions
@@ -393,7 +374,6 @@ Respond with valid JSON only, no additional text or formatting."""
             if not validation_result.get("success"):
                 logger.warning(f"Schema validation failed: {validation_result.get('error')}")
             
-            # Handle comparison queries
             if enhanced_query.comparison_period:
                 primary_start, primary_end = self._parse_time_period(enhanced_query.time_period, current_date)
                 comparison_start, comparison_end = self._parse_time_period(enhanced_query.comparison_period, current_date)
@@ -422,7 +402,6 @@ Respond with valid JSON only, no additional text or formatting."""
                     "validation": validation_result
                 }
             else:
-                # Single period query
                 start_date, end_date = self._parse_time_period(enhanced_query.time_period, current_date)
                 
                 logger.info(f"MCP single period query: {start_date} to {end_date}")
@@ -461,7 +440,6 @@ Respond with valid JSON only, no additional text or formatting."""
             is_comparison = raw_data.get("analysis_type") == "comparison"
             output_format = raw_data.get("output_format", "detailed")
             
-            # Prepare analysis context
             mcp_result = raw_data.get("mcp_result", {})
             
             if is_comparison:
@@ -517,13 +495,11 @@ CRITICAL: User requested "{output_format}" format - adapt your response accordin
 
     def _extract_json_from_response(self, content: str) -> Dict:
         """Extract JSON from LLM response with multiple fallback methods"""
-        # Method 1: Try direct JSON parsing
         try:
             return json.loads(content)
         except json.JSONDecodeError:
             pass
         
-        # Method 2: Try to extract from markdown code blocks
         if "```json" in content:
             json_start = content.find("```json") + 7
             json_end = content.find("```", json_start)
@@ -534,7 +510,6 @@ CRITICAL: User requested "{output_format}" format - adapt your response accordin
                 except json.JSONDecodeError:
                     pass
         
-        # Method 3: Try to find any code block
         if "```" in content:
             json_start = content.find("```") + 3
             json_end = content.find("```", json_start)
@@ -545,7 +520,6 @@ CRITICAL: User requested "{output_format}" format - adapt your response accordin
                 except json.JSONDecodeError:
                     pass
         
-        # Method 4: Try to find JSON-like content between braces
         start_brace = content.find("{")
         end_brace = content.rfind("}") + 1
         if start_brace != -1 and end_brace > start_brace:
@@ -555,7 +529,6 @@ CRITICAL: User requested "{output_format}" format - adapt your response accordin
             except json.JSONDecodeError:
                 pass
         
-        # Method 5: Fallback
         logger.warning("Could not extract JSON from response, using fallback")
         return {
             "summary": "Analysis completed with limited insights due to JSON parsing error.",
@@ -575,7 +548,6 @@ CRITICAL: User requested "{output_format}" format - adapt your response accordin
             logger.warning(f"Invalid current_date format: {current_date}, using today")
             current = datetime.now()
         
-        # Handle specific month formats
         if "_" in time_period and any(month in time_period.lower() for month in [
             "january", "february", "march", "april", "may", "june",
             "july", "august", "september", "october", "november", "december"
@@ -596,13 +568,11 @@ CRITICAL: User requested "{output_format}" format - adapt your response accordin
             except (ValueError, KeyError):
                 logger.warning(f"Could not parse specific month format: {time_period}")
         
-        # Handle current/this month
         if "current_month" in time_period.lower() or "this month" in time_period.lower():
             first_day = current.replace(day=1)
             last_day = current.replace(day=calendar.monthrange(current.year, current.month)[1])
             return first_day.strftime("%Y-%m-%d"), last_day.strftime("%Y-%m-%d")
         
-        # Handle previous/last month
         if "previous_month" in time_period.lower() or "last month" in time_period.lower():
             first_of_current = current.replace(day=1)
             last_of_previous = first_of_current - timedelta(days=1)
@@ -610,7 +580,6 @@ CRITICAL: User requested "{output_format}" format - adapt your response accordin
             
             return first_of_previous.strftime("%Y-%m-%d"), last_of_previous.strftime("%Y-%m-%d")
         
-        # Handle other time periods
         if "yesterday" in time_period.lower():
             date = current - timedelta(days=1)
             return date.strftime("%Y-%m-%d"), date.strftime("%Y-%m-%d")
@@ -623,6 +592,5 @@ CRITICAL: User requested "{output_format}" format - adapt your response accordin
             start_date = end_date - timedelta(days=29)
             return start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d")
         else:
-            # Default to yesterday
             date = current - timedelta(days=1)
             return date.strftime("%Y-%m-%d"), date.strftime("%Y-%m-%d")

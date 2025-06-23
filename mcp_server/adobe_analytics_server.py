@@ -1,6 +1,5 @@
 """
 MCP Server for Adobe Analytics Operations
-Standalone server that can be deployed and updated independently
 SECURITY: This server should only be accessible internally by the FastAPI backend
 """
 
@@ -17,10 +16,8 @@ from pydantic import BaseModel, Field
 import requests
 from dotenv import load_dotenv
 
-# Load environment variables
 load_dotenv(".env.local")
 
-# Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -28,19 +25,16 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Initialize FastAPI app for MCP server
 app = FastAPI(
     title="Adobe Analytics MCP Server", 
     version="1.0.0",
-    docs_url=None,  # Disable docs for security
-    redoc_url=None  # Disable redoc for security
+    docs_url=None,
+    redoc_url=None
 )
 
-# SECURITY: Only allow internal access
-# Configure CORS to only allow the main FastAPI backend
 ALLOWED_ORIGINS = [
-    "http://localhost:8000",  # Main FastAPI backend
-    "http://127.0.0.1:8000",  # Alternative localhost
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
 ]
 
 app.add_middleware(
@@ -51,14 +45,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Adobe Analytics configuration
 CLIENT_ID = os.environ.get("ADOBE_CLIENT_ID")
 CLIENT_SECRET = os.environ.get("ADOBE_CLIENT_SECRET")
 COMPANY_ID = os.environ.get("ADOBE_COMPANY_ID")
 ORG_ID = os.environ.get("ADOBE_ORG_ID")
 REPORTSUIT_ID = os.environ.get("ADOBE_REPORTSUIT_ID")
 
-# Validate required environment variables
 required_env_vars = [CLIENT_ID, CLIENT_SECRET, COMPANY_ID, ORG_ID, REPORTSUIT_ID]
 if not all(required_env_vars):
     logger.error("Missing required Adobe Analytics environment variables")
@@ -66,27 +58,23 @@ if not all(required_env_vars):
 
 
 class MCPRequest(BaseModel):
-    """MCP request structure"""
     method: str = Field(description="MCP method name")
     params: Dict[str, Any] = Field(description="Method parameters")
     id: Optional[str] = Field(default=None, description="Request ID")
 
 
 class MCPResponse(BaseModel):
-    """MCP response structure"""
     result: Optional[Dict[str, Any]] = Field(default=None, description="Response result")
     error: Optional[Dict[str, Any]] = Field(default=None, description="Error information")
     id: Optional[str] = Field(default=None, description="Request ID")
 
 
 class MCPTool(BaseModel):
-    """MCP tool definition"""
     name: str = Field(description="Tool name")
     description: str = Field(description="Tool description")
     input_schema: Dict[str, Any] = Field(description="JSON schema for tool input")
 
 
-# Adobe Analytics schema (comprehensive list)
 METRICS = [
     "metrics/visits", "metrics/visitors", "metrics/pageviews", "metrics/bounces",
     "metrics/bouncerate", "metrics/entries", "metrics/exits", "metrics/orders",
@@ -115,7 +103,6 @@ async def security_middleware(request: Request, call_next):
     """Security middleware to restrict access to internal requests only"""
     client_host = request.client.host if request.client else "unknown"
     
-    # Allow localhost and 127.0.0.1 for internal access
     allowed_hosts = ["127.0.0.1", "localhost", "::1"]
     
     if client_host not in allowed_hosts:
@@ -156,7 +143,6 @@ def validate_metrics_dimensions(metrics: List[str], dimensions: List[str]) -> Di
         if metric in METRICS:
             valid_metrics.append(metric)
         else:
-            # Try to find close matches
             metric_clean = metric.replace("metrics/", "").lower()
             for valid_metric in METRICS:
                 if metric_clean in valid_metric.lower():
@@ -172,7 +158,6 @@ def validate_metrics_dimensions(metrics: List[str], dimensions: List[str]) -> Di
         if dimension in DIMENSIONS:
             valid_dimensions.append(dimension)
         else:
-            # Try to find close matches
             dimension_clean = dimension.replace("variables/", "").lower()
             for valid_dimension in DIMENSIONS:
                 if dimension_clean in valid_dimension.lower():
@@ -182,9 +167,9 @@ def validate_metrics_dimensions(metrics: List[str], dimensions: List[str]) -> Di
                 invalid_dimensions.append(dimension)
     
     return {
-        "valid_metrics": valid_metrics or ["metrics/visits"],  # Default fallback
+        "valid_metrics": valid_metrics or ["metrics/visits"],
         "invalid_metrics": invalid_metrics,
-        "valid_dimensions": valid_dimensions or ["variables/page"],  # Default fallback
+        "valid_dimensions": valid_dimensions or ["variables/page"],
         "invalid_dimensions": invalid_dimensions
     }
 
@@ -198,7 +183,6 @@ def get_analytics_report(
 ) -> Dict[str, Any]:
     """Get Adobe Analytics report with improved error handling"""
     try:
-        # Validate and clean inputs
         validation = validate_metrics_dimensions(metrics, dimensions)
         clean_metrics = validation["valid_metrics"]
         clean_dimensions = validation["valid_dimensions"]
@@ -215,15 +199,12 @@ def get_analytics_report(
             "Authorization": f"Bearer {get_access_token()}",
         }
 
-        # Prepare metrics
         metric_entries = []
         for idx, metric in enumerate(clean_metrics):
             metric_entries.append({"columnId": str(idx), "id": metric})
 
-        # Use primary dimension
         primary_dimension = clean_dimensions[0]
 
-        # Build request body
         body = {
             "rsid": REPORTSUIT_ID,
             "globalFilters": [
@@ -235,14 +216,13 @@ def get_analytics_report(
             "metricContainer": {"metrics": metric_entries},
             "dimension": primary_dimension,
             "settings": {
-                "limit": min(limit, 50),  # Cap limit for performance
+                "limit": min(limit, 50),
                 "page": 0,
                 "dimensionSort": "asc",
                 "countRepeatInstances": True,
             },
         }
 
-        # Add second dimension if provided (breakdown)
         if len(clean_dimensions) > 1:
             body["metricContainer"]["metricFilters"] = [
                 {
@@ -301,7 +281,6 @@ def parse_time_period(time_period: str, current_date: str) -> tuple[str, str]:
         logger.warning(f"Invalid current_date format: {current_date}, using today")
         current = datetime.now()
     
-    # Handle specific month formats (e.g., "november_2024")
     if "_" in time_period and any(month in time_period.lower() for month in [
         "january", "february", "march", "april", "may", "june",
         "july", "august", "september", "october", "november", "december"
@@ -322,13 +301,11 @@ def parse_time_period(time_period: str, current_date: str) -> tuple[str, str]:
         except (ValueError, KeyError) as e:
             logger.warning(f"Could not parse specific month format: {time_period}, error: {e}")
     
-    # Handle current/this month
     if "current_month" in time_period.lower() or "this month" in time_period.lower():
         first_day = current.replace(day=1)
         last_day = current.replace(day=calendar.monthrange(current.year, current.month)[1])
         return first_day.strftime("%Y-%m-%d"), last_day.strftime("%Y-%m-%d")
     
-    # Handle previous/last month
     if "previous_month" in time_period.lower() or "last month" in time_period.lower():
         first_of_current = current.replace(day=1)
         last_of_previous = first_of_current - timedelta(days=1)
@@ -336,7 +313,6 @@ def parse_time_period(time_period: str, current_date: str) -> tuple[str, str]:
         
         return first_of_previous.strftime("%Y-%m-%d"), last_of_previous.strftime("%Y-%m-%d")
     
-    # Handle other time periods
     if "yesterday" in time_period.lower():
         date_obj = current - timedelta(days=1)
         return date_obj.strftime("%Y-%m-%d"), date_obj.strftime("%Y-%m-%d")
@@ -353,12 +329,10 @@ def parse_time_period(time_period: str, current_date: str) -> tuple[str, str]:
         start_date = end_date - timedelta(days=89)
         return start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d")
     else:
-        # Default to yesterday
         date_obj = current - timedelta(days=1)
         return date_obj.strftime("%Y-%m-%d"), date_obj.strftime("%Y-%m-%d")
 
 
-# MCP Tool Definitions
 MCP_TOOLS = [
     MCPTool(
         name="get_analytics_report",
@@ -471,7 +445,6 @@ async def handle_mcp_request(request: MCPRequest) -> MCPResponse:
             logger.info(f"Calling tool: {tool_name} with arguments: {arguments}")
             
             if tool_name == "get_analytics_report":
-                # Validate required arguments
                 required_args = ["metrics", "dimensions", "start_date", "end_date"]
                 missing_args = [arg for arg in required_args if arg not in arguments]
                 if missing_args:
@@ -504,7 +477,6 @@ async def handle_mcp_request(request: MCPRequest) -> MCPResponse:
                 )
             
             elif tool_name == "get_comparison_report":
-                # Validate required arguments
                 required_args = ["metrics", "dimensions", "primary_start", "primary_end", "comparison_start", "comparison_end"]
                 missing_args = [arg for arg in required_args if arg not in arguments]
                 if missing_args:
@@ -516,7 +488,6 @@ async def handle_mcp_request(request: MCPRequest) -> MCPResponse:
                         id=request.id
                     )
                 
-                # Get primary period data
                 primary_result = get_analytics_report(
                     metrics=arguments["metrics"],
                     dimensions=arguments["dimensions"],
@@ -525,7 +496,6 @@ async def handle_mcp_request(request: MCPRequest) -> MCPResponse:
                     limit=arguments.get("limit", 20)
                 )
                 
-                # Get comparison period data
                 comparison_result = get_analytics_report(
                     metrics=arguments["metrics"],
                     dimensions=arguments["dimensions"],
@@ -559,7 +529,6 @@ async def handle_mcp_request(request: MCPRequest) -> MCPResponse:
                 )
             
             elif tool_name == "validate_schema":
-                # Validate required arguments
                 required_args = ["metrics", "dimensions"]
                 missing_args = [arg for arg in required_args if arg not in arguments]
                 if missing_args:
@@ -650,7 +619,6 @@ async def handle_mcp_request(request: MCPRequest) -> MCPResponse:
 async def health_check():
     """Health check endpoint - internal use only"""
     try:
-        # Test Adobe Analytics connection
         token = get_access_token()
         adobe_status = "connected" if token else "disconnected"
     except Exception as e:
@@ -676,23 +644,20 @@ async def list_tools():
     }
 
 
-# Startup event
 @app.on_event("startup")
 async def startup_event():
     """Startup event to validate configuration"""
     logger.info("Starting Adobe Analytics MCP Server...")
     
-    # Validate Adobe Analytics configuration
     try:
         token = get_access_token()
         logger.info("Adobe Analytics connection validated successfully")
     except Exception as e:
         logger.error(f"Failed to validate Adobe Analytics connection: {str(e)}")
-        # Don't fail startup, but log the error
     
     logger.info(f"MCP Server started with {len(MCP_TOOLS)} tools available")
 
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=8001)  # Only bind to localhost
+    uvicorn.run(app, host="127.0.0.1", port=8001)

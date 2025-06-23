@@ -8,10 +8,8 @@ import os
 import logging
 from dotenv import load_dotenv
 
-# Load environment variables
 load_dotenv(".env.local")
 
-# Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -20,14 +18,12 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 if __name__ == "__main__":
-    # SECURITY: Only bind to localhost/127.0.0.1 for internal access
-    host = "127.0.0.1"  # Force localhost only
+    host = "127.0.0.1"
     port = int(os.environ.get("MCP_SERVER_PORT", "8001"))
     
     logger.info(f"Starting Adobe Analytics MCP Server on {host}:{port}")
     logger.info("SECURITY: Server configured for internal access only")
     
-    # Validate required environment variables
     required_vars = [
         "ADOBE_CLIENT_ID", "ADOBE_CLIENT_SECRET", "ADOBE_COMPANY_ID", 
         "ADOBE_ORG_ID", "ADOBE_REPORTSUIT_ID"

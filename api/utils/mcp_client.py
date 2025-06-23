@@ -1,6 +1,5 @@
 """
-MCP (Model Context Protocol) Client for Adobe Analytics
-Handles communication with MCP servers for analytics operations
+MCP Client for Adobe Analytics
 SECURITY: Only communicates with internal MCP servers
 """
 
@@ -11,7 +10,6 @@ from typing import Dict, Any, List, Optional
 import httpx
 from pydantic import BaseModel, Field
 
-# Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -21,21 +19,18 @@ logger = logging.getLogger(__name__)
 
 
 class MCPRequest(BaseModel):
-    """MCP request structure"""
     method: str = Field(description="MCP method name")
     params: Dict[str, Any] = Field(description="Method parameters")
     id: Optional[str] = Field(default=None, description="Request ID")
 
 
 class MCPResponse(BaseModel):
-    """MCP response structure"""
     result: Optional[Dict[str, Any]] = Field(default=None, description="Response result")
     error: Optional[Dict[str, Any]] = Field(default=None, description="Error information")
     id: Optional[str] = Field(default=None, description="Request ID")
 
 
 class MCPTool(BaseModel):
-    """MCP tool definition"""
     name: str = Field(description="Tool name")
     description: str = Field(description="Tool description")
     input_schema: Dict[str, Any] = Field(description="JSON schema for tool input")
@@ -45,7 +40,6 @@ class MCPClient:
     """Client for communicating with MCP servers"""
     
     def __init__(self, server_url: str, timeout: int = 30):
-        # SECURITY: Validate that server_url is internal
         if not self._is_internal_url(server_url):
             raise ValueError(f"MCP server URL must be internal: {server_url}")
         
@@ -59,15 +53,13 @@ class MCPClient:
         return any(host in url for host in internal_hosts)
         
     async def __aenter__(self):
-        """Async context manager entry"""
         self.session = httpx.AsyncClient(
             timeout=self.timeout,
-            verify=False  # Skip SSL verification for internal services
+            verify=False
         )
         return self
         
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        """Async context manager exit"""
         if self.session:
             await self.session.aclose()
     
@@ -122,10 +114,8 @@ class MCPClient:
                     "success": False
                 }
             
-            # Extract content from MCP response
             content = response.result.get("content", [])
             if content and len(content) > 0:
-                # Try to parse JSON from the first content item
                 try:
                     result_text = content[0].get("text", "{}")
                     result_data = json.loads(result_text)
@@ -173,7 +163,7 @@ class MCPClient:
                 logger.error(f"HTTP error communicating with MCP server (attempt {attempt + 1}): {str(e)}")
                 if attempt == max_retries - 1:
                     raise
-                await asyncio.sleep(1)  # Wait before retry
+                await asyncio.sleep(1)
             except Exception as e:
                 logger.error(f"Error communicating with MCP server: {str(e)}")
                 raise
