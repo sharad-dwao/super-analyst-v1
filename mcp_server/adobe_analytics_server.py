@@ -530,15 +530,6 @@ MCP_TOOLS = [
     ),
 ]
 
-def ensure_json_serializable(obj: Any) -> Any:
-    """Ensure object is JSON serializable"""
-    try:
-        json.dumps(obj)
-        return obj
-    except (TypeError, ValueError):
-        # Convert non-serializable objects to string
-        return str(obj)
-
 @app.post("/mcp")
 async def handle_mcp_request(request: MCPRequest) -> MCPResponse:
     """Handle MCP protocol requests"""
@@ -576,13 +567,10 @@ async def handle_mcp_request(request: MCPRequest) -> MCPResponse:
                     limit=arguments.get("limit", 20),
                 )
 
-                # Ensure result is JSON serializable
-                serializable_result = ensure_json_serializable(result)
-                
                 return MCPResponse(
                     result={
                         "content": [
-                            {"type": "text", "text": json.dumps(serializable_result, indent=2, ensure_ascii=False)}
+                            {"type": "text", "text": json.dumps(result, indent=2)}
                         ]
                     },
                     id=request.id,
@@ -636,13 +624,10 @@ async def handle_mcp_request(request: MCPRequest) -> MCPResponse:
                     },
                 }
 
-                # Ensure result is JSON serializable
-                serializable_result = ensure_json_serializable(result)
-
                 return MCPResponse(
                     result={
                         "content": [
-                            {"type": "text", "text": json.dumps(serializable_result, indent=2, ensure_ascii=False)}
+                            {"type": "text", "text": json.dumps(result, indent=2)}
                         ]
                     },
                     id=request.id,
@@ -674,13 +659,10 @@ async def handle_mcp_request(request: MCPRequest) -> MCPResponse:
                     },
                 }
 
-                # Ensure result is JSON serializable
-                serializable_result = ensure_json_serializable(result)
-
                 return MCPResponse(
                     result={
                         "content": [
-                            {"type": "text", "text": json.dumps(serializable_result, indent=2, ensure_ascii=False)}
+                            {"type": "text", "text": json.dumps(result, indent=2)}
                         ]
                     },
                     id=request.id,
@@ -701,7 +683,6 @@ async def handle_mcp_request(request: MCPRequest) -> MCPResponse:
                     "server_type": "mcp_adobe_analytics",
                 }
 
-                # For get_current_date, return just the date string as expected
                 return MCPResponse(
                     result={"content": [{"type": "text", "text": result["date"]}]},
                     id=request.id,
