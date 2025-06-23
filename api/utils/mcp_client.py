@@ -1,6 +1,7 @@
 """
 MCP (Model Context Protocol) Client for Adobe Analytics
 Handles communication with MCP servers for analytics operations
+SECURITY: Only communicates with internal MCP servers
 """
 
 import json
@@ -44,13 +45,25 @@ class MCPClient:
     """Client for communicating with MCP servers"""
     
     def __init__(self, server_url: str, timeout: int = 30):
+        # SECURITY: Validate that server_url is internal
+        if not self._is_internal_url(server_url):
+            raise ValueError(f"MCP server URL must be internal: {server_url}")
+        
         self.server_url = server_url.rstrip('/')
         self.timeout = timeout
         self.session = None
         
+    def _is_internal_url(self, url: str) -> bool:
+        """Validate that URL is internal/localhost only"""
+        internal_hosts = ["localhost", "127.0.0.1", "::1"]
+        return any(host in url for host in internal_hosts)
+        
     async def __aenter__(self):
         """Async context manager entry"""
-        self.session = httpx.AsyncClient(timeout=self.timeout)
+        self.session = httpx.AsyncClient(
+            timeout=self.timeout,
+            verify=False  # Skip SSL verification for internal services
+        )
         return self
         
     async def __aexit__(self, exc_type, exc_val, exc_tb):
@@ -75,7 +88,10 @@ class MCPClient:
             
             tools = []
             for tool_data in response.result.get("tools", []):
-                tools.append(MCPTool(**tool_data))
+                try:
+                    tools.append(MCPTool(**tool_data))
+                except Exception as e:
+                    logger.warning(f"Failed to parse tool data: {tool_data}, error: {e}")
             
             logger.info(f"Found {len(tools)} tools from MCP server")
             return tools
@@ -106,13 +122,27 @@ class MCPClient:
                     "success": False
                 }
             
-            result = response.result.get("content", [])
-            logger.info(f"Tool {tool_name} executed successfully")
-            
-            return {
-                "result": result,
-                "success": True
-            }
+            # Extract content from MCP response
+            content = response.result.get("content", [])
+            if content and len(content) > 0:
+                # Try to parse JSON from the first content item
+                try:
+                    result_text = content[0].get("text", "{}")
+                    result_data = json.loads(result_text)
+                    logger.info(f"Tool {tool_name} executed successfully")
+                    return result_data
+                except json.JSONDecodeError as e:
+                    logger.warning(f"Failed to parse tool result as JSON: {e}")
+                    return {
+                        "result": content,
+                        "success": True
+                    }
+            else:
+                logger.warning(f"No content in tool response for {tool_name}")
+                return {
+                    "result": response.result,
+                    "success": True
+                }
             
         except Exception as e:
             logger.error(f"Failed to call tool {tool_name}: {str(e)}")
@@ -122,27 +152,31 @@ class MCPClient:
             }
     
     async def _send_request(self, request: MCPRequest) -> MCPResponse:
-        """Send request to MCP server"""
+        """Send request to MCP server with retry logic"""
         if not self.session:
             raise RuntimeError("MCP client session not initialized")
         
-        try:
-            response = await self.session.post(
-                f"{self.server_url}/mcp",
-                json=request.dict(),
-                headers={"Content-Type": "application/json"}
-            )
-            response.raise_for_status()
-            
-            response_data = response.json()
-            return MCPResponse(**response_data)
-            
-        except httpx.HTTPError as e:
-            logger.error(f"HTTP error communicating with MCP server: {str(e)}")
-            raise
-        except Exception as e:
-            logger.error(f"Error communicating with MCP server: {str(e)}")
-            raise
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                response = await self.session.post(
+                    f"{self.server_url}/mcp",
+                    json=request.dict(),
+                    headers={"Content-Type": "application/json"}
+                )
+                response.raise_for_status()
+                
+                response_data = response.json()
+                return MCPResponse(**response_data)
+                
+            except httpx.HTTPError as e:
+                logger.error(f"HTTP error communicating with MCP server (attempt {attempt + 1}): {str(e)}")
+                if attempt == max_retries - 1:
+                    raise
+                await asyncio.sleep(1)  # Wait before retry
+            except Exception as e:
+                logger.error(f"Error communicating with MCP server: {str(e)}")
+                raise
 
 
 class AdobeAnalyticsMCPClient:
@@ -222,3 +256,17 @@ class AdobeAnalyticsMCPClient:
         """List all available analytics tools"""
         async with self.client as mcp:
             return await mcp.list_tools()
+    
+    async def health_check(self) -> Dict[str, Any]:
+        """Check MCP server health"""
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                response = await client.get(f"{self.server_url}/health")
+                response.raise_for_status()
+                return response.json()
+        except Exception as e:
+            logger.error(f"MCP server health check failed: {str(e)}")
+            return {
+                "status": "error",
+                "error": str(e)
+            }

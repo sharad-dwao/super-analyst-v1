@@ -1,6 +1,7 @@
 """
 MCP-based Analytics Pipeline
 Replaces LangChain pipeline with MCP server integration
+SECURITY: Only communicates with internal MCP servers
 """
 
 import json
@@ -54,14 +55,34 @@ class MCPAnalyticsPipeline:
             streaming=True
         )
         
+        # SECURITY: Validate MCP server URL is internal
+        if not self._is_internal_url(mcp_server_url):
+            raise ValueError(f"MCP server URL must be internal: {mcp_server_url}")
+        
         self.mcp_client = AdobeAnalyticsMCPClient(mcp_server_url)
         self.available_tools = []
+        self.mcp_server_url = mcp_server_url
+        
+    def _is_internal_url(self, url: str) -> bool:
+        """Validate that URL is internal/localhost only"""
+        internal_hosts = ["localhost", "127.0.0.1", "::1"]
+        return any(host in url for host in internal_hosts)
         
     async def initialize(self):
         """Initialize the pipeline and discover available tools"""
         try:
+            # Check MCP server health first
+            health = await self.mcp_client.health_check()
+            if health.get("status") != "healthy":
+                logger.warning(f"MCP server health check failed: {health}")
+            
+            # Discover available tools
             self.available_tools = await self.mcp_client.list_available_tools()
             logger.info(f"Initialized MCP pipeline with {len(self.available_tools)} tools")
+            
+            if not self.available_tools:
+                logger.warning("No tools discovered from MCP server")
+                
         except Exception as e:
             logger.error(f"Failed to initialize MCP pipeline: {str(e)}")
             self.available_tools = []
@@ -72,13 +93,38 @@ class MCPAnalyticsPipeline:
         for tool in self.available_tools:
             tools_info += f"- {tool.name}: {tool.description}\n"
         
+        if not tools_info:
+            tools_info = "- get_analytics_report: Get Adobe Analytics report\n- get_comparison_report: Compare data between periods\n"
+        
         return f"""You are an expert analytics query enhancer using MCP (Model Context Protocol) servers for Adobe Analytics. Your job is to take user queries about web analytics and enhance them for better analysis.
 
 ## Available MCP Tools:
 {tools_info}
 
+## Common Adobe Analytics Metrics:
+- metrics/visits: Total visits to the site
+- metrics/visitors: Unique visitors
+- metrics/pageviews: Total page views
+- metrics/bounces: Single-page visits
+- metrics/bouncerate: Percentage of bounced visits
+- metrics/orders: Number of orders
+- metrics/revenue: Total revenue
+- metrics/conversionrate: Conversion percentage
+
+## Common Adobe Analytics Dimensions:
+- variables/page: Page name or URL
+- variables/referrer: Referring URL
+- variables/campaign: Campaign tracking code
+- variables/geocountry: Visitor country
+- variables/browser: Web browser
+- variables/mobiledevicetype: Mobile device type
+- variables/marketingchannel: Marketing channel
+- variables/daterangemonth: Monthly breakdown
+- variables/daterangeweek: Weekly breakdown
+- variables/daterangeday: Daily breakdown
+
 ## OUTPUT FORMAT DETECTION:
-Pay special attention to how the user wants the output formatted. Look for keywords like:
+Pay special attention to how the user wants the output formatted:
 - "summary" / "summarize" / "brief" → output_format: "summary"
 - "detailed" / "in detail" / "comprehensive" → output_format: "detailed"
 - "table" / "tabular" / "in a table" → output_format: "table"
@@ -102,17 +148,23 @@ When users ask for comparisons between time periods:
 
 Your task:
 1. Understand the user's intent and clarify ambiguous requests
-2. Identify the most relevant metrics and dimensions
+2. Identify the most relevant metrics and dimensions from the available schema
 3. Determine appropriate time periods if not specified
 4. **DETECT THE PREFERRED OUTPUT FORMAT** from user language
 5. For comparisons, identify both primary and comparison periods
 6. Enhance the query with analytics best practices
 
+Guidelines:
+- Use only valid Adobe Analytics metrics and dimensions
+- Limit dimensions to maximum 2 for optimal performance
+- Choose metrics that directly answer the user's question
+- For time-based analysis, consider using date range dimensions
+
 You must respond with a valid JSON object with these exact fields:
 - enhanced_query: string
 - intent: string
-- metrics: array of strings
-- dimensions: array of strings (max 2 elements)
+- metrics: array of strings (use valid Adobe Analytics metric IDs)
+- dimensions: array of strings (max 2 elements, use valid dimension IDs)
 - time_period: string
 - comparison_period: string (empty if no comparison needed)
 - output_format: string (detected from user query or "detailed" as default)
@@ -167,13 +219,31 @@ Respond with valid JSON only, no additional text or formatting."""
 - data_analysis: Structured with clear headings and sub-points
 - recommendations: Prioritized numbered list
 
-Your task:
+## Analysis Guidelines:
 1. **FIRST: Identify the requested output format and adapt accordingly**
 2. Analyze the raw data from MCP servers
 3. Identify key patterns, trends, and anomalies
 4. Provide clear, actionable insights in the preferred format
 5. Make data-driven recommendations
 6. Present findings in a business-friendly format
+
+## Multi-Dimensional Analysis:
+- When analyzing cross-dimensional data, look for interaction patterns
+- Identify which combinations perform best/worst
+- Compare performance across different dimension values
+- Look for opportunities in underperforming segments
+
+## Comparison Analysis:
+- When comparing time periods, calculate percentage changes and growth rates
+- Identify significant trends and changes between periods
+- Highlight both positive and negative changes
+- Provide context for why changes might have occurred
+- Focus on actionable insights from the comparison
+
+## Error Handling:
+- If data is incomplete or has errors, acknowledge this in the analysis
+- Provide recommendations based on available data
+- Suggest follow-up analyses if needed
 
 **REMEMBER: The output format preference is CRITICAL - users expect their specified format to be respected.**
 
@@ -212,6 +282,7 @@ Respond with valid JSON only, no additional text or formatting."""
                 "stage_3_analysis": final_result.dict() if hasattr(final_result, 'dict') else final_result,
                 "success": True,
                 "mcp_info": {
+                    "server_url": self.mcp_server_url,
                     "tools_available": len(self.available_tools),
                     "server_type": "mcp_adobe_analytics",
                     "pipeline_version": "mcp_v1.0"
@@ -224,6 +295,7 @@ Respond with valid JSON only, no additional text or formatting."""
                 "error": str(e),
                 "success": False,
                 "mcp_info": {
+                    "server_url": self.mcp_server_url,
                     "tools_available": len(self.available_tools),
                     "server_type": "mcp_adobe_analytics"
                 }
@@ -244,6 +316,10 @@ Respond with valid JSON only, no additional text or formatting."""
             logger.info(f"Enhancement response: {content}")
             
             result_dict = self._extract_json_from_response(content)
+            
+            # Validate and clean the result
+            result_dict = self._validate_enhancement_result(result_dict)
+            
             return AnalyticsQuery(**result_dict)
                 
         except Exception as e:
@@ -251,13 +327,51 @@ Respond with valid JSON only, no additional text or formatting."""
             return AnalyticsQuery(
                 enhanced_query=user_query,
                 intent="general_analysis",
-                metrics=["visits"],
-                dimensions=["page"],
+                metrics=["metrics/visits"],
+                dimensions=["variables/page"],
                 time_period="yesterday",
                 comparison_period="",
                 output_format="detailed",
                 additional_context="Fallback enhancement due to processing error"
             )
+
+    def _validate_enhancement_result(self, result_dict: Dict) -> Dict:
+        """Validate and clean enhancement result"""
+        # Ensure required fields exist
+        required_fields = ["enhanced_query", "intent", "metrics", "dimensions", "time_period", "output_format"]
+        for field in required_fields:
+            if field not in result_dict:
+                logger.warning(f"Missing field {field} in enhancement result")
+                if field == "metrics":
+                    result_dict[field] = ["metrics/visits"]
+                elif field == "dimensions":
+                    result_dict[field] = ["variables/page"]
+                elif field == "output_format":
+                    result_dict[field] = "detailed"
+                else:
+                    result_dict[field] = ""
+        
+        # Ensure metrics and dimensions are lists
+        if not isinstance(result_dict["metrics"], list):
+            result_dict["metrics"] = [result_dict["metrics"]] if result_dict["metrics"] else ["metrics/visits"]
+        
+        if not isinstance(result_dict["dimensions"], list):
+            result_dict["dimensions"] = [result_dict["dimensions"]] if result_dict["dimensions"] else ["variables/page"]
+        
+        # Limit dimensions to 2
+        if len(result_dict["dimensions"]) > 2:
+            result_dict["dimensions"] = result_dict["dimensions"][:2]
+            logger.info("Limited dimensions to 2 for optimal performance")
+        
+        # Ensure comparison_period exists
+        if "comparison_period" not in result_dict:
+            result_dict["comparison_period"] = ""
+        
+        # Ensure additional_context exists
+        if "additional_context" not in result_dict:
+            result_dict["additional_context"] = ""
+        
+        return result_dict
 
     async def _get_analytics_data_mcp(self, enhanced_query: AnalyticsQuery) -> Dict[str, Any]:
         """Stage 2: Retrieve data via MCP servers"""
@@ -268,7 +382,7 @@ Respond with valid JSON only, no additional text or formatting."""
                 logger.warning("Failed to get current date from MCP server")
                 current_date = "2024-11-20"  # Fallback
             else:
-                current_date = date_result["result"][0]["text"]
+                current_date = date_result.get("date", "2024-11-20")
             
             # Validate schema via MCP
             validation_result = await self.mcp_client.validate_schema(
@@ -304,7 +418,8 @@ Respond with valid JSON only, no additional text or formatting."""
                         "dimensions": enhanced_query.dimensions,
                         "primary_period": {"start": primary_start, "end": primary_end},
                         "comparison_period": {"start": comparison_start, "end": comparison_end}
-                    }
+                    },
+                    "validation": validation_result
                 }
             else:
                 # Single period query
@@ -328,7 +443,8 @@ Respond with valid JSON only, no additional text or formatting."""
                         "dimensions": enhanced_query.dimensions,
                         "start_date": start_date,
                         "end_date": end_date
-                    }
+                    },
+                    "validation": validation_result
                 }
             
         except Exception as e:
@@ -345,18 +461,27 @@ Respond with valid JSON only, no additional text or formatting."""
             is_comparison = raw_data.get("analysis_type") == "comparison"
             output_format = raw_data.get("output_format", "detailed")
             
+            # Prepare analysis context
+            mcp_result = raw_data.get("mcp_result", {})
+            
             if is_comparison:
                 analysis_context = f"""Analysis Type: Comparison Analysis via MCP Server
 Output Format Requested: {output_format}
-MCP Server Response: {json.dumps(raw_data.get('mcp_result', {}), indent=2)}
+MCP Server Response Success: {mcp_result.get('success', False)}
 Query Parameters: {json.dumps(raw_data.get('query_params', {}), indent=2)}
+
+Data Summary:
+- Primary Period Data: {json.dumps(mcp_result.get('primary_period', {}).get('metadata', {}), indent=2) if mcp_result.get('success') else 'Error retrieving data'}
+- Comparison Period Data: {json.dumps(mcp_result.get('comparison_period', {}).get('metadata', {}), indent=2) if mcp_result.get('success') else 'Error retrieving data'}
 
 CRITICAL: User requested "{output_format}" format - adapt your response accordingly."""
             else:
                 analysis_context = f"""Analysis Type: {raw_data.get('analysis_type', 'unknown')} via MCP Server
 Output Format Requested: {output_format}
-MCP Server Response: {json.dumps(raw_data.get('mcp_result', {}), indent=2)}
+MCP Server Response Success: {mcp_result.get('success', False)}
 Query Parameters: {json.dumps(raw_data.get('query_params', {}), indent=2)}
+
+Data Summary: {json.dumps(mcp_result.get('metadata', {}), indent=2) if mcp_result.get('success') else 'Error retrieving data'}
 
 CRITICAL: User requested "{output_format}" format - adapt your response accordingly."""
             
@@ -433,14 +558,10 @@ CRITICAL: User requested "{output_format}" format - adapt your response accordin
         # Method 5: Fallback
         logger.warning("Could not extract JSON from response, using fallback")
         return {
-            "enhanced_query": "Basic query analysis",
-            "intent": "general_analysis",
-            "metrics": ["visits"],
-            "dimensions": ["page"],
-            "time_period": "yesterday",
-            "comparison_period": "",
-            "output_format": "detailed",
-            "additional_context": "JSON extraction failed, using defaults"
+            "summary": "Analysis completed with limited insights due to JSON parsing error.",
+            "key_insights": ["Data processing encountered formatting issues", "Manual review recommended"],
+            "data_analysis": "Response formatting error prevented detailed analysis.",
+            "recommendations": ["Check system logs", "Retry analysis", "Contact support if issue persists"]
         }
 
     def _parse_time_period(self, time_period: str, current_date: str) -> tuple[str, str]:
@@ -448,7 +569,11 @@ CRITICAL: User requested "{output_format}" format - adapt your response accordin
         from datetime import datetime, timedelta
         import calendar
         
-        current = datetime.fromisoformat(current_date)
+        try:
+            current = datetime.fromisoformat(current_date)
+        except ValueError:
+            logger.warning(f"Invalid current_date format: {current_date}, using today")
+            current = datetime.now()
         
         # Handle specific month formats
         if "_" in time_period and any(month in time_period.lower() for month in [
