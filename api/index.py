@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI()
 
-llm_model = "openai/gpt-4o-mini"  # Fixed: Changed from non-existent gpt-4.1-mini
+llm_model = "openai/gpt-4.1-mini"  # Fixed: Changed from non-existent gpt-4.1-mini
 
 client = AsyncOpenAI(
     api_key=os.environ.get("OPENROUTER_API_KEY"),
@@ -39,14 +39,16 @@ try:
     mcp_pipeline = MCPAnalyticsPipeline(
         openai_api_key=os.environ.get("OPENROUTER_API_KEY"),
         mcp_server_url=mcp_server_url,
-        base_url="https://openrouter.ai/api/v1"
+        base_url="https://openrouter.ai/api/v1",
     )
 except Exception as e:
     logger.error(f"Failed to initialize MCP pipeline: {str(e)}")
     mcp_pipeline = None
 
+
 class Request(BaseModel):
     messages: List[ClientMessage]
+
 
 def get_current_datetime_info():
     """Get current date and time information for LLM context"""
@@ -59,8 +61,9 @@ def get_current_datetime_info():
         "current_month_num": now.month,
         "current_day": now.day,
         "day_of_week": now.strftime("%A"),
-        "iso_date": now.isoformat()
+        "iso_date": now.isoformat(),
     }
+
 
 def get_tools_def():
     return [
@@ -91,48 +94,42 @@ def get_tools_def():
         },
     ]
 
+
 async def analyze_with_mcp(user_query: str) -> dict:
     logger.info(f"Starting MCP analysis for query: {user_query[:100]}...")
-    
+
     if not mcp_pipeline:
         return {
             "error": "MCP pipeline not initialized",
             "success": False,
-            "fallback": True
+            "fallback": True,
         }
-    
+
     try:
         result = await asyncio.wait_for(
-            mcp_pipeline.process_query(user_query),
-            timeout=120.0
+            mcp_pipeline.process_query(user_query), timeout=120.0
         )
         logger.info("MCP analysis completed successfully")
         return result
     except asyncio.TimeoutError:
         logger.error("MCP analysis timed out")
-        return {
-            "error": "Analysis timed out",
-            "success": False,
-            "timeout": True
-        }
+        return {"error": "Analysis timed out", "success": False, "timeout": True}
     except Exception as e:
         logger.error(f"MCP analysis failed: {str(e)}")
-        return {
-            "error": str(e),
-            "success": False
-        }
+        return {"error": str(e), "success": False}
+
 
 async def get_mcp_server_status() -> dict:
     logger.info("Checking MCP server status")
-    
+
     if not mcp_pipeline:
         return {
             "status": "error",
             "server_url": mcp_server_url,
             "error": "MCP pipeline not initialized",
-            "tools_available": 0
+            "tools_available": 0,
         }
-    
+
     try:
         await mcp_pipeline.initialize()
         status = {
@@ -140,14 +137,13 @@ async def get_mcp_server_status() -> dict:
             "server_url": mcp_server_url,
             "tools_available": len(mcp_pipeline.available_tools),
             "tools": [
-                {
-                    "name": tool.name,
-                    "description": tool.description
-                }
+                {"name": tool.name, "description": tool.description}
                 for tool in mcp_pipeline.available_tools
-            ]
+            ],
         }
-        logger.info(f"MCP server status: {status['status']}, tools: {status['tools_available']}")
+        logger.info(
+            f"MCP server status: {status['status']}, tools: {status['tools_available']}"
+        )
         return status
     except Exception as e:
         logger.error(f"MCP server status check failed: {str(e)}")
@@ -155,19 +151,23 @@ async def get_mcp_server_status() -> dict:
             "status": "error",
             "server_url": mcp_server_url,
             "error": str(e),
-            "tools_available": 0
+            "tools_available": 0,
         }
+
 
 available_tools = {
     "analyze_with_mcp": analyze_with_mcp,
     "get_mcp_server_status": get_mcp_server_status,
 }
 
-async def stream_text(messages: List[ChatCompletionMessageParam], protocol: str = "data"):
+
+async def stream_text(
+    messages: List[ChatCompletionMessageParam], protocol: str = "data"
+):
     logger.info(f"Starting stream with {len(messages)} messages")
     draft_tool_calls = []
     draft_tool_calls_index = -1
-    
+
     try:
         stream = await client.chat.completions.create(
             messages=messages,
@@ -186,7 +186,7 @@ async def stream_text(messages: List[ChatCompletionMessageParam], protocol: str 
 
                     elif choice.finish_reason == "tool_calls":
                         logger.info(f"Processing {len(draft_tool_calls)} tool calls")
-                        
+
                         for call in draft_tool_calls:
                             logger.info(f"Executing tool: {call['name']}")
                             yield f"9:{{\"toolCallId\":\"{call['id']}\",\"toolName\":\"{call['name']}\",\"args\":{call['arguments']}}}\n"
@@ -195,20 +195,28 @@ async def stream_text(messages: List[ChatCompletionMessageParam], protocol: str 
                             try:
                                 if call["name"] == "analyze_with_mcp":
                                     arguments = json.loads(call["arguments"])
-                                    result = await analyze_with_mcp(arguments.get("user_query", ""))
+                                    result = await analyze_with_mcp(
+                                        arguments.get("user_query", "")
+                                    )
                                 else:
                                     arguments = json.loads(call["arguments"])
-                                    result = await available_tools[call["name"]](**arguments)
+                                    result = await available_tools[call["name"]](
+                                        **arguments
+                                    )
 
-                                logger.info(f"Tool {call['name']} completed successfully")
+                                logger.info(
+                                    f"Tool {call['name']} completed successfully"
+                                )
                                 yield f"a:{{\"toolCallId\":\"{call['id']}\",\"toolName\":\"{call['name']}\",\"args\":{call['arguments']},\"result\":{json.dumps(result)}}}\n"
 
                             except Exception as tool_error:
-                                logger.error(f"Tool {call['name']} failed: {str(tool_error)}")
+                                logger.error(
+                                    f"Tool {call['name']} failed: {str(tool_error)}"
+                                )
                                 error_result = {
                                     "error": str(tool_error),
                                     "success": False,
-                                    "tool_name": call['name']
+                                    "tool_name": call["name"],
                                 }
                                 yield f"a:{{\"toolCallId\":\"{call['id']}\",\"toolName\":\"{call['name']}\",\"args\":{call['arguments']},\"result\":{json.dumps(error_result)}}}\n"
 
@@ -217,11 +225,17 @@ async def stream_text(messages: List[ChatCompletionMessageParam], protocol: str 
                             if tc.id is not None:
                                 draft_tool_calls_index += 1
                                 draft_tool_calls.append(
-                                    {"id": tc.id, "name": tc.function.name, "arguments": ""}
+                                    {
+                                        "id": tc.id,
+                                        "name": tc.function.name,
+                                        "arguments": "",
+                                    }
                                 )
                             else:
                                 if draft_tool_calls_index >= 0:
-                                    draft_tool_calls[draft_tool_calls_index]["arguments"] += tc.function.arguments
+                                    draft_tool_calls[draft_tool_calls_index][
+                                        "arguments"
+                                    ] += tc.function.arguments
 
                     else:
                         text = choice.delta.content
@@ -234,21 +248,22 @@ async def stream_text(messages: List[ChatCompletionMessageParam], protocol: str 
 
         # Fixed: Check if chunk has usage attribute before accessing
         usage_info = {"promptTokens": 0, "completionTokens": 0}
-        if hasattr(chunk, 'usage') and chunk.usage:
+        if hasattr(chunk, "usage") and chunk.usage:
             usage_info = {
                 "promptTokens": chunk.usage.prompt_tokens,
-                "completionTokens": chunk.usage.completion_tokens
+                "completionTokens": chunk.usage.completion_tokens,
             }
-        
+
         yield (
             f"e:{{\"finishReason\":\"{('tool-calls' if draft_tool_calls else 'stop')}\","
             f'"usage":{json.dumps(usage_info)},'
             f'"isContinued":false}}\n'
         )
-            
+
     except Exception as stream_error:
         logger.error(f"Stream error: {str(stream_error)}")
-        yield f"e:{{\"finishReason\":\"error\",\"error\":\"{str(stream_error)}\",\"isContinued\":false}}\n"
+        yield f'e:{{"finishReason":"error","error":"{str(stream_error)}","isContinued":false}}\n'
+
 
 # Fixed: Use raw string for Windows path
 PROMPT = None
@@ -259,14 +274,15 @@ except FileNotFoundError:
     logger.warning("System prompt file not found, using fallback")
     PROMPT = "You are an expert AI assistant specializing in web analytics and data insights."
 
+
 @app.post("/api/chat")
 async def handle_chat_data(request: Request, protocol: str = Query("data")):
     logger.info(f"Received chat request with {len(request.messages)} messages")
-    
+
     try:
         # Get current date/time information
         datetime_info = get_current_datetime_info()
-        
+
         system_msg = {
             "role": "system",
             "content": f"""{PROMPT}
@@ -317,35 +333,40 @@ MCP Server URL: {mcp_server_url}""",
 
         messages = request.messages
         openai_messages = convert_to_openai_messages(messages)
-        
+
         # Limit message history to prevent context overflow
         max_messages = 20
         if len(openai_messages) > max_messages:
-            logger.info(f"Truncating message history from {len(openai_messages)} to {max_messages}")
+            logger.info(
+                f"Truncating message history from {len(openai_messages)} to {max_messages}"
+            )
             openai_messages = openai_messages[-max_messages:]
-        
+
         openai_messages.insert(0, system_msg)
-        
-        logger.info(f"Processing {len(openai_messages)} messages with current date: {datetime_info['current_date']}")
-        
+
+        logger.info(
+            f"Processing {len(openai_messages)} messages with current date: {datetime_info['current_date']}"
+        )
+
         response = StreamingResponse(
-            stream_text(openai_messages, protocol),
-            media_type="text/plain"
+            stream_text(openai_messages, protocol), media_type="text/plain"
         )
         response.headers["x-vercel-ai-data-stream"] = "v1"
         response.headers["Cache-Control"] = "no-cache"
         response.headers["Connection"] = "keep-alive"
-        
+
         return response
-        
+
     except Exception as e:
         logger.error(f"Chat handler error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.get("/api/mcp/status")
 async def get_mcp_status():
     logger.info("MCP status endpoint called")
     return await get_mcp_server_status()
+
 
 @app.on_event("startup")
 async def startup_event():
