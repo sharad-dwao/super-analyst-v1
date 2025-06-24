@@ -40,3 +40,4 @@ APScheduler==3.11.0
 langchain==0.2.16
 langchain-openai==0.1.22
 langchain-core==0.2.40
+langsmith>=0.1.112,<0.2.0

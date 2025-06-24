@@ -8,6 +8,8 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 from .mcp_client import AdobeAnalyticsMCPClient, MCPTool
+from langsmith import traceable
+from langchain.callbacks import LangChainTracer
 
 logger = logging.getLogger(__name__)
 
@@ -97,6 +99,7 @@ class MCPAnalyticsPipeline:
                 logger.error(f"Failed to initialize MCP pipeline: {str(e)}")
                 self.available_tools = []
 
+    @traceable
     def _get_current_date_context(self) -> str:
         """Get current date context for LLM prompts"""
         now = datetime.now()
@@ -111,6 +114,7 @@ class MCPAnalyticsPipeline:
 **IMPORTANT**: Always use this current date when interpreting relative time periods like "this month", "last month", "yesterday", etc.
 """
 
+    @traceable
     def _get_enhancement_system_prompt(self) -> str:
         tools_info = ""
         for tool in self.available_tools:
@@ -209,6 +213,7 @@ You must respond with a valid JSON object with these exact fields:
 
 Respond with valid JSON only, no additional text or formatting."""
 
+    @traceable
     def _get_analysis_system_prompt(self) -> str:
         current_date_context = self._get_current_date_context()
 
@@ -296,6 +301,7 @@ You must respond with a valid JSON object with these exact fields:
 
 Respond with valid JSON only, no additional text or formatting."""
 
+    @traceable
     async def process_query(self, user_query: str) -> Dict[str, Any]:
         logger.info(f"Processing query: {user_query[:100]}...")
 
@@ -364,6 +370,7 @@ Respond with valid JSON only, no additional text or formatting."""
                 },
             }
 
+    @traceable
     async def _enhance_query(self, user_query: str) -> AnalyticsQuery:
         try:
             prompt = ChatPromptTemplate.from_messages(
@@ -397,6 +404,7 @@ Respond with valid JSON only, no additional text or formatting."""
                 additional_context="Fallback enhancement due to processing error",
             )
 
+    @traceable
     def _validate_enhancement_result(self, result_dict: Dict) -> Dict:
         required_fields = [
             "enhanced_query",
@@ -444,6 +452,7 @@ Respond with valid JSON only, no additional text or formatting."""
 
         return result_dict
 
+    @traceable
     async def _get_analytics_data_mcp(
         self, enhanced_query: AnalyticsQuery
     ) -> Dict[str, Any]:
@@ -567,6 +576,7 @@ Respond with valid JSON only, no additional text or formatting."""
                 ),
             }
 
+    @traceable
     async def _analyze_data(
         self, enhanced_query: AnalyticsQuery, raw_data: Dict[str, Any]
     ) -> AnalyticsResult:
@@ -646,6 +656,7 @@ CRITICAL: User requested "{output_format}" format - adapt your response accordin
                 raw_data=raw_data,
             )
 
+    @traceable
     def _extract_json_from_response(self, content: str) -> Dict:
         try:
             return json.loads(content)
@@ -696,6 +707,7 @@ CRITICAL: User requested "{output_format}" format - adapt your response accordin
             ],
         }
 
+    @traceable
     def _parse_time_period(
         self, time_period: str, current_date: str
     ) -> tuple[str, str]:

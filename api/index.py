@@ -12,6 +12,9 @@ from fastapi.responses import StreamingResponse
 from openai import AsyncOpenAI
 from .utils.prompt import ClientMessage, convert_to_openai_messages
 from .utils.mcp_pipeline import MCPAnalyticsPipeline
+from langsmith import traceable
+from langchain.callbacks import LangChainTracer
+from langsmith.wrappers import wrap_openai
 
 load_dotenv(".env.local")
 
@@ -26,10 +29,12 @@ app = FastAPI()
 
 llm_model = "openai/gpt-4.1-mini"  # Fixed: Changed from non-existent gpt-4.1-mini
 
-client = AsyncOpenAI(
-    api_key=os.environ.get("OPENROUTER_API_KEY"),
-    base_url="https://openrouter.ai/api/v1",
-    timeout=60.0,
+client = wrap_openai(
+    AsyncOpenAI(
+        api_key=os.environ.get("OPENROUTER_API_KEY"),
+        base_url="https://openrouter.ai/api/v1",
+        timeout=60.0,
+    )
 )
 
 mcp_server_url = os.environ.get("MCP_SERVER_URL", "http://localhost:8001")
@@ -95,6 +100,7 @@ def get_tools_def():
     ]
 
 
+@traceable
 async def analyze_with_mcp(user_query: str) -> dict:
     logger.info(f"Starting MCP analysis for query: {user_query[:100]}...")
 
@@ -275,6 +281,7 @@ except FileNotFoundError:
     PROMPT = "You are an expert AI assistant specializing in web analytics and data insights."
 
 
+@traceable
 @app.post("/api/chat")
 async def handle_chat_data(request: Request, protocol: str = Query("data")):
     logger.info(f"Received chat request with {len(request.messages)} messages")
