@@ -16,7 +16,7 @@
   "dependencies": {
     "@ai-sdk/ui-utils": "^0.0.20",
     "@radix-ui/react-slot": "^1.1.0",
-    "@types/node": "24.0.3",
+    "@types/node": "24.0.4",
     "@types/react": "19.1.8",
     "@types/react-dom": "18.2.4",
     "@vercel/analytics": "^1.3.1",
