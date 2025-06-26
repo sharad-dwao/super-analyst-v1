@@ -3,7 +3,7 @@ import logging
 import os
 import asyncio
 from datetime import datetime
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
@@ -13,7 +13,6 @@ from langchain.callbacks import LangChainTracer
 
 logger = logging.getLogger(__name__)
 
-
 class AnalyticsQuery(BaseModel):
     enhanced_query: str = Field(description="Enhanced and clarified user query")
     intent: str = Field(description="Primary intent of the query")
@@ -21,11 +20,13 @@ class AnalyticsQuery(BaseModel):
     dimensions: List[str] = Field(description="List of relevant dimensions")
     time_period: str = Field(description="Time period for analysis")
     comparison_period: str = Field(description="Optional comparison period", default="")
-    output_format: str = Field(
-        description="Preferred output format", default="detailed"
-    )
+    output_format: str = Field(description="Preferred output format", default="detailed")
     additional_context: str = Field(description="Additional context or requirements")
-
+    segment_filters: Optional[List[Dict[str, Any]]] = Field(default=None, description="Segment filters to apply")
+    dimension_filters: Optional[List[Dict[str, Any]]] = Field(default=None, description="Dimension filters to apply")
+    sort_metric: Optional[str] = Field(default=None, description="Metric to sort by")
+    sort_direction: str = Field(default="desc", description="Sort direction")
+    use_complex_report: bool = Field(default=False, description="Whether to use complex reporting")
 
 class AnalyticsResult(BaseModel):
     summary: str = Field(description="Executive summary of findings")
@@ -34,7 +35,6 @@ class AnalyticsResult(BaseModel):
     recommendations: List[str] = Field(description="Actionable recommendations")
     raw_data: Dict[str, Any] = Field(description="Raw data from analytics")
 
-
 class MCPAnalyticsPipeline:
     def __init__(
         self,
@@ -42,9 +42,8 @@ class MCPAnalyticsPipeline:
         mcp_server_url: str,
         base_url: str = "https://openrouter.ai/api/v1",
     ):
-        # Fixed: Changed to correct model name
         self.llm = ChatOpenAI(
-            model="openai/gpt-4.1-mini",
+            model="openai/gpt-4o-mini",
             api_key=openai_api_key,
             base_url=base_url,
             temperature=0.1,
@@ -84,9 +83,7 @@ class MCPAnalyticsPipeline:
                     self.mcp_client.list_available_tools(), timeout=15.0
                 )
 
-                logger.info(
-                    f"MCP pipeline initialized with {len(self.available_tools)} tools"
-                )
+                logger.info(f"MCP pipeline initialized with {len(self.available_tools)} tools")
                 self._initialized = True
 
                 if not self.available_tools:
@@ -101,7 +98,6 @@ class MCPAnalyticsPipeline:
 
     @traceable
     def _get_current_date_context(self) -> str:
-        """Get current date context for LLM prompts"""
         now = datetime.now()
         return f"""
 ## CURRENT DATE CONTEXT (CRITICAL FOR TIME CALCULATIONS):
@@ -121,7 +117,7 @@ class MCPAnalyticsPipeline:
             tools_info += f"- {tool.name}: {tool.description}\n"
 
         if not tools_info:
-            tools_info = "- get_analytics_report: Get Adobe Analytics report\n- get_comparison_report: Compare data between periods\n"
+            tools_info = "- get_analytics_report: Get Adobe Analytics report\n- get_comparison_report: Compare data between periods\n- get_complex_analytics_report: Complex multi-dimensional reports with filtering\n"
 
         current_date_context = self._get_current_date_context()
 
@@ -141,6 +137,7 @@ class MCPAnalyticsPipeline:
 - metrics/orders: Number of orders
 - metrics/revenue: Total revenue
 - metrics/conversionrate: Conversion percentage
+- metrics/event1-10: Custom events
 
 ## Common Adobe Analytics Dimensions:
 - variables/page: Page name or URL
@@ -153,6 +150,30 @@ class MCPAnalyticsPipeline:
 - variables/daterangemonth: Monthly breakdown
 - variables/daterangeweek: Weekly breakdown
 - variables/daterangeday: Daily breakdown
+- variables/prop1-5: Custom properties
+- variables/evar1-5: Custom eVars
+
+## ADVANCED FILTERING CAPABILITIES:
+
+### Segment Filters:
+When users mention specific audience segments, user groups, or behavioral patterns, set segment_filters:
+- Format: [{"segment_id": "segment_identifier"}]
+- Examples: "mobile users", "returning visitors", "high-value customers"
+
+### Dimension Filters:
+When users want to filter by specific dimension values, set dimension_filters:
+- Format: [{"dimension": "dimension_name", "operator": "operator_type", "values": ["value1", "value2"]}]
+- Operators: "equals", "contains", "starts_with", "ends_with", "not_equals"
+- Examples: 
+  - "pages containing 'product'": {"dimension": "variables/page", "operator": "contains", "values": ["product"]}
+  - "traffic from US": {"dimension": "variables/geocountry", "operator": "equals", "values": ["United States"]}
+
+### Complex Reporting:
+Set use_complex_report to true when:
+- Multiple dimensions are needed (more than 2)
+- Filtering is required
+- Sorting by specific metrics is needed
+- Advanced breakdowns are requested
 
 ## OUTPUT FORMAT DETECTION:
 Pay special attention to how the user wants the output formatted:
@@ -191,25 +212,34 @@ Your task:
 3. Identify the most relevant metrics and dimensions from the available schema
 4. Determine appropriate time periods using the current date as reference
 5. **DETECT THE PREFERRED OUTPUT FORMAT** from user language
-6. For comparisons, identify both primary and comparison periods
-7. Enhance the query with analytics best practices
+6. **IDENTIFY FILTERING REQUIREMENTS** for segments and dimensions
+7. **DETERMINE COMPLEXITY LEVEL** and set use_complex_report accordingly
+8. For comparisons, identify both primary and comparison periods
+9. Enhance the query with analytics best practices
 
 Guidelines:
 - Use only valid Adobe Analytics metrics and dimensions
-- Limit dimensions to maximum 2 for optimal performance
+- Limit dimensions to maximum 4 for optimal performance
 - Choose metrics that directly answer the user's question
 - For time-based analysis, consider using date range dimensions
 - **ALWAYS reference the current date context when calculating time periods**
+- Set appropriate filters when users mention specific criteria
+- Use complex reporting for advanced analysis needs
 
 You must respond with a valid JSON object with these exact fields:
 - enhanced_query: string
 - intent: string
 - metrics: array of strings (use valid Adobe Analytics metric IDs)
-- dimensions: array of strings (max 2 elements, use valid dimension IDs)
+- dimensions: array of strings (max 4 elements, use valid dimension IDs)
 - time_period: string (calculated using current date context)
 - comparison_period: string (empty if no comparison needed)
 - output_format: string (detected from user query or "detailed" as default)
 - additional_context: string
+- segment_filters: array of objects or null
+- dimension_filters: array of objects or null
+- sort_metric: string or null
+- sort_direction: string ("asc" or "desc")
+- use_complex_report: boolean
 
 Respond with valid JSON only, no additional text or formatting."""
 
@@ -278,6 +308,12 @@ Respond with valid JSON only, no additional text or formatting."""
 - Identify which combinations perform best/worst
 - Compare performance across different dimension values
 - Look for opportunities in underperforming segments
+
+## Filtered Data Analysis:
+- When segment or dimension filters are applied, acknowledge the filtered scope
+- Compare filtered results against broader patterns when relevant
+- Identify unique characteristics of the filtered data set
+- Provide insights specific to the filtered audience or criteria
 
 ## Comparison Analysis:
 - When comparing time periods, calculate percentage changes and growth rates
@@ -440,15 +476,22 @@ Respond with valid JSON only, no additional text or formatting."""
                 else ["variables/page"]
             )
 
-        if len(result_dict["dimensions"]) > 2:
-            result_dict["dimensions"] = result_dict["dimensions"][:2]
-            logger.info("Limited dimensions to 2 for optimal performance")
+        if len(result_dict["dimensions"]) > 4:
+            result_dict["dimensions"] = result_dict["dimensions"][:4]
+            logger.info("Limited dimensions to 4 for optimal performance")
 
-        if "comparison_period" not in result_dict:
-            result_dict["comparison_period"] = ""
-
-        if "additional_context" not in result_dict:
-            result_dict["additional_context"] = ""
+        optional_fields = [
+            "comparison_period", "additional_context", "segment_filters",
+            "dimension_filters", "sort_metric", "sort_direction", "use_complex_report"
+        ]
+        for field in optional_fields:
+            if field not in result_dict:
+                if field == "sort_direction":
+                    result_dict[field] = "desc"
+                elif field == "use_complex_report":
+                    result_dict[field] = False
+                else:
+                    result_dict[field] = None if field.endswith("_filters") or field == "sort_metric" else ""
 
         return result_dict
 
@@ -528,18 +571,33 @@ Respond with valid JSON only, no additional text or formatting."""
 
                 logger.info(f"MCP single period query: {start_date} to {end_date}")
 
-                result = await asyncio.wait_for(
-                    self.mcp_client.get_analytics_report(
-                        metrics=enhanced_query.metrics,
-                        dimensions=enhanced_query.dimensions,
-                        start_date=start_date,
-                        end_date=end_date,
-                    ),
-                    timeout=45.0,
-                )
+                if enhanced_query.use_complex_report or enhanced_query.segment_filters or enhanced_query.dimension_filters:
+                    result = await asyncio.wait_for(
+                        self.mcp_client.get_complex_analytics_report(
+                            metrics=enhanced_query.metrics,
+                            dimensions=enhanced_query.dimensions,
+                            start_date=start_date,
+                            end_date=end_date,
+                            segment_filters=enhanced_query.segment_filters,
+                            dimension_filters=enhanced_query.dimension_filters,
+                            sort_metric=enhanced_query.sort_metric,
+                            sort_direction=enhanced_query.sort_direction
+                        ),
+                        timeout=45.0,
+                    )
+                else:
+                    result = await asyncio.wait_for(
+                        self.mcp_client.get_analytics_report(
+                            metrics=enhanced_query.metrics,
+                            dimensions=enhanced_query.dimensions,
+                            start_date=start_date,
+                            end_date=end_date,
+                        ),
+                        timeout=45.0,
+                    )
 
                 return {
-                    "analysis_type": "single_period",
+                    "analysis_type": "complex_single_period" if enhanced_query.use_complex_report else "single_period",
                     "output_format": enhanced_query.output_format,
                     "mcp_result": result,
                     "query_params": {
@@ -547,6 +605,10 @@ Respond with valid JSON only, no additional text or formatting."""
                         "dimensions": enhanced_query.dimensions,
                         "start_date": start_date,
                         "end_date": end_date,
+                        "filters_applied": {
+                            "segments": len(enhanced_query.segment_filters) if enhanced_query.segment_filters else 0,
+                            "dimensions": len(enhanced_query.dimension_filters) if enhanced_query.dimension_filters else 0
+                        }
                     },
                     "validation": validation_result,
                     "current_date_used": current_date,
@@ -582,6 +644,7 @@ Respond with valid JSON only, no additional text or formatting."""
     ) -> AnalyticsResult:
         try:
             is_comparison = raw_data.get("analysis_type") == "comparison"
+            is_complex = raw_data.get("analysis_type") == "complex_single_period"
             output_format = raw_data.get("output_format", "detailed")
             current_date_used = raw_data.get(
                 "current_date_used", datetime.now().strftime("%Y-%m-%d")
@@ -599,6 +662,18 @@ Query Parameters: {json.dumps(raw_data.get('query_params', {}), indent=2)}
 Data Summary:
 - Primary Period Data: {json.dumps(mcp_result.get('primary_period', {}).get('metadata', {}), indent=2) if mcp_result.get('success') else 'Error retrieving data'}
 - Comparison Period Data: {json.dumps(mcp_result.get('comparison_period', {}).get('metadata', {}), indent=2) if mcp_result.get('success') else 'Error retrieving data'}
+
+CRITICAL: User requested "{output_format}" format - adapt your response accordingly."""
+            elif is_complex:
+                filters_info = raw_data.get('query_params', {}).get('filters_applied', {})
+                analysis_context = f"""Analysis Type: Complex Multi-Dimensional Analysis via MCP Server
+Output Format Requested: {output_format}
+Current Date Reference: {current_date_used}
+MCP Server Response Success: {mcp_result.get('success', False)}
+Filters Applied: {filters_info.get('segments', 0)} segment filters, {filters_info.get('dimensions', 0)} dimension filters
+Query Parameters: {json.dumps(raw_data.get('query_params', {}), indent=2)}
+
+Data Summary: {json.dumps(mcp_result.get('metadata', {}), indent=2) if mcp_result.get('success') else 'Error retrieving data'}
 
 CRITICAL: User requested "{output_format}" format - adapt your response accordingly."""
             else:

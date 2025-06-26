@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI()
 
-llm_model = "openai/gpt-4.1-mini"  # Fixed: Changed from non-existent gpt-4.1-mini
+llm_model = "openai/gpt-4o-mini"
 
 client = wrap_openai(
     AsyncOpenAI(
@@ -39,7 +39,6 @@ client = wrap_openai(
 
 mcp_server_url = os.environ.get("MCP_SERVER_URL", "http://localhost:8001")
 
-# Initialize MCP pipeline with proper error handling
 try:
     mcp_pipeline = MCPAnalyticsPipeline(
         openai_api_key=os.environ.get("OPENROUTER_API_KEY"),
@@ -50,13 +49,10 @@ except Exception as e:
     logger.error(f"Failed to initialize MCP pipeline: {str(e)}")
     mcp_pipeline = None
 
-
 class Request(BaseModel):
     messages: List[ClientMessage]
 
-
 def get_current_datetime_info():
-    """Get current date and time information for LLM context"""
     now = datetime.now()
     return {
         "current_date": now.strftime("%Y-%m-%d"),
@@ -69,14 +65,13 @@ def get_current_datetime_info():
         "iso_date": now.isoformat(),
     }
 
-
 def get_tools_def():
     return [
         {
             "type": "function",
             "function": {
                 "name": "analyze_with_mcp",
-                "description": "Analyze user query using MCP servers for Adobe Analytics data",
+                "description": "Analyze user query using MCP servers for Adobe Analytics data with advanced filtering and multi-dimensional analysis",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -98,7 +93,6 @@ def get_tools_def():
             },
         },
     ]
-
 
 @traceable
 async def analyze_with_mcp(user_query: str) -> dict:
@@ -123,7 +117,6 @@ async def analyze_with_mcp(user_query: str) -> dict:
     except Exception as e:
         logger.error(f"MCP analysis failed: {str(e)}")
         return {"error": str(e), "success": False}
-
 
 async def get_mcp_server_status() -> dict:
     logger.info("Checking MCP server status")
@@ -160,12 +153,10 @@ async def get_mcp_server_status() -> dict:
             "tools_available": 0,
         }
 
-
 available_tools = {
     "analyze_with_mcp": analyze_with_mcp,
     "get_mcp_server_status": get_mcp_server_status,
 }
-
 
 async def stream_text(
     messages: List[ChatCompletionMessageParam], protocol: str = "data"
@@ -252,7 +243,6 @@ async def stream_text(
                 logger.error(f"Error processing chunk: {str(chunk_error)}")
                 continue
 
-        # Fixed: Check if chunk has usage attribute before accessing
         usage_info = {"promptTokens": 0, "completionTokens": 0}
         if hasattr(chunk, "usage") and chunk.usage:
             usage_info = {
@@ -270,16 +260,13 @@ async def stream_text(
         logger.error(f"Stream error: {str(stream_error)}")
         yield f'e:{{"finishReason":"error","error":"{str(stream_error)}","isContinued":false}}\n'
 
-
-# Fixed: Use raw string for Windows path
 PROMPT = None
 try:
     with open(r"api/sys_prompt.md", encoding="utf-8") as infile:
         PROMPT = "".join(infile.readlines())
 except FileNotFoundError:
     logger.warning("System prompt file not found, using fallback")
-    PROMPT = "You are an expert AI assistant specializing in web analytics and data insights."
-
+    PROMPT = "You are an expert AI assistant specializing in web analytics and data insights with advanced filtering and multi-dimensional analysis capabilities."
 
 @traceable
 @app.post("/api/chat")
@@ -287,7 +274,6 @@ async def handle_chat_data(request: Request, protocol: str = Query("data")):
     logger.info(f"Received chat request with {len(request.messages)} messages")
 
     try:
-        # Get current date/time information
         datetime_info = get_current_datetime_info()
 
         system_msg = {
@@ -317,19 +303,29 @@ async def handle_chat_data(request: Request, protocol: str = Query("data")):
 - **Independent Updates**: MCP servers can be updated without affecting the main application
 - **Scalable**: Multiple MCP servers can handle different analytics functions
 - **Reliable**: Fault-tolerant communication with MCP servers
+- **Advanced Filtering**: Support for segment and dimension filtering
+- **Multi-dimensional Analysis**: Complex breakdowns and cross-dimensional insights
 
 ## Available MCP Functions:
-1. **analyze_with_mcp**: Comprehensive analytics analysis using MCP servers
+1. **analyze_with_mcp**: Comprehensive analytics analysis using MCP servers with advanced filtering
 2. **get_mcp_server_status**: Check MCP server health and available tools
 
+## Advanced Analytics Capabilities:
+- **Complex Multi-dimensional Reports**: Up to 4 dimensions with nested breakdowns
+- **Segment Filtering**: Filter data by specific audience segments
+- **Dimension Filtering**: Filter by specific dimension values with various operators
+- **Custom Sorting**: Sort results by any metric in ascending or descending order
+- **Advanced Comparisons**: Compare filtered vs unfiltered data sets
+
 ## MCP Pipeline Stages:
-1. **Stage 1 - Query Enhancement**: Clarifies and structures user queries with proper date context
-2. **Stage 2 - MCP Data Retrieval**: Fetches data via MCP servers using correct date ranges
-3. **Stage 3 - Analysis**: Generates insights and recommendations
+1. **Stage 1 - Query Enhancement**: Clarifies and structures user queries with proper date context and filtering requirements
+2. **Stage 2 - MCP Data Retrieval**: Fetches data via MCP servers using correct date ranges and applied filters
+3. **Stage 3 - Analysis**: Generates insights and recommendations with filter-aware analysis
 
 When users ask analytics questions, use the `analyze_with_mcp` function which will:
 - Process queries through MCP servers with accurate date context
-- Handle complex analytics operations with proper time calculations
+- Handle complex analytics operations with proper time calculations and filtering
+- Support segment and dimension filtering for targeted analysis
 - Provide comprehensive insights with correct temporal references
 - Support real-time streaming of analysis progress
 
@@ -341,7 +337,6 @@ MCP Server URL: {mcp_server_url}""",
         messages = request.messages
         openai_messages = convert_to_openai_messages(messages)
 
-        # Limit message history to prevent context overflow
         max_messages = 20
         if len(openai_messages) > max_messages:
             logger.info(
@@ -368,12 +363,10 @@ MCP Server URL: {mcp_server_url}""",
         logger.error(f"Chat handler error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
-
 @app.get("/api/mcp/status")
 async def get_mcp_status():
     logger.info("MCP status endpoint called")
     return await get_mcp_server_status()
-
 
 @app.on_event("startup")
 async def startup_event():

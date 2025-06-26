@@ -188,6 +188,33 @@ class AdobeAnalyticsMCPClient:
             },
         )
     
+    async def get_complex_analytics_report(
+        self,
+        metrics: List[str],
+        dimensions: List[str],
+        start_date: str,
+        end_date: str,
+        segment_filters: Optional[List[Dict[str, Any]]] = None,
+        dimension_filters: Optional[List[Dict[str, Any]]] = None,
+        limit: int = 20,
+        sort_metric: Optional[str] = None,
+        sort_direction: str = "desc"
+    ) -> Dict[str, Any]:
+        return await self.client.call_tool(
+            "get_complex_analytics_report",
+            {
+                "metrics": metrics,
+                "dimensions": dimensions,
+                "start_date": start_date,
+                "end_date": end_date,
+                "segment_filters": segment_filters,
+                "dimension_filters": dimension_filters,
+                "limit": limit,
+                "sort_metric": sort_metric,
+                "sort_direction": sort_direction,
+            },
+        )
+    
     async def get_comparison_report(
         self,
         metrics: List[str],
@@ -207,6 +234,24 @@ class AdobeAnalyticsMCPClient:
                 "primary_end": primary_end,
                 "comparison_start": comparison_start,
                 "comparison_end": comparison_end,
+                "limit": limit,
+            },
+        )
+    
+    async def get_segments_list(self) -> Dict[str, Any]:
+        return await self.client.call_tool("get_segments_list", {})
+    
+    async def get_dimension_values(
+        self,
+        dimension: str,
+        search_term: Optional[str] = None,
+        limit: int = 50
+    ) -> Dict[str, Any]:
+        return await self.client.call_tool(
+            "get_dimension_values",
+            {
+                "dimension": dimension,
+                "search_term": search_term,
                 "limit": limit,
             },
         )

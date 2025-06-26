@@ -2,7 +2,7 @@ import os
 import json
 import logging
 import asyncio
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Union
 from datetime import date, datetime, timedelta
 import calendar
 from fastapi import FastAPI, HTTPException, Request
@@ -40,7 +40,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Environment variables with validation
 CLIENT_ID = os.environ.get("ADOBE_CLIENT_ID")
 CLIENT_SECRET = os.environ.get("ADOBE_CLIENT_SECRET")
 COMPANY_ID = os.environ.get("ADOBE_COMPANY_ID")
@@ -66,12 +65,8 @@ class MCPRequest(BaseModel):
     id: Optional[str] = Field(default=None, description="Request ID")
 
 class MCPResponse(BaseModel):
-    result: Optional[Dict[str, Any]] = Field(
-        default=None, description="Response result"
-    )
-    error: Optional[Dict[str, Any]] = Field(
-        default=None, description="Error information"
-    )
+    result: Optional[Dict[str, Any]] = Field(default=None, description="Response result")
+    error: Optional[Dict[str, Any]] = Field(default=None, description="Error information")
     id: Optional[str] = Field(default=None, description="Request ID")
 
 class MCPTool(BaseModel):
@@ -79,68 +74,50 @@ class MCPTool(BaseModel):
     description: str = Field(description="Tool description")
     input_schema: Dict[str, Any] = Field(description="JSON schema for tool input")
 
-# Comprehensive metrics and dimensions lists
+class DimensionFilter(BaseModel):
+    dimension: str = Field(description="Dimension to filter on")
+    operator: str = Field(description="Filter operator (equals, contains, starts_with, ends_with, not_equals)")
+    values: List[str] = Field(description="Values to filter by")
+
+class SegmentFilter(BaseModel):
+    segment_id: str = Field(description="Adobe Analytics segment ID")
+
+class GlobalFilter(BaseModel):
+    type: str = Field(description="Filter type (dateRange, segment, dimension)")
+    dateRange: Optional[str] = Field(default=None, description="Date range filter")
+    segmentId: Optional[str] = Field(default=None, description="Segment ID")
+    dimension: Optional[str] = Field(default=None, description="Dimension for filtering")
+    itemId: Optional[str] = Field(default=None, description="Item ID for dimension filter")
+    itemIds: Optional[List[str]] = Field(default=None, description="Multiple item IDs")
+
 METRICS = [
-    "metrics/visits",
-    "metrics/visitors",
-    "metrics/pageviews",
-    "metrics/bounces",
-    "metrics/bouncerate",
-    "metrics/entries",
-    "metrics/exits",
-    "metrics/orders",
-    "metrics/revenue",
-    "metrics/conversionrate",
-    "metrics/averagetimespentonsite",
-    "metrics/averagetimespentonpage",
-    "metrics/averagevisitdepth",
-    "metrics/units",
-    "metrics/carts",
-    "metrics/cartadditions",
-    "metrics/cartremovals",
-    "metrics/cartviews",
-    "metrics/checkouts",
-    "metrics/occurrences",
-    "metrics/singlepagevisits",
-    "metrics/reloads",
-    "metrics/timespent",
-    "metrics/campaigninstances",
-    "metrics/clickthroughs",
+    "metrics/visits", "metrics/visitors", "metrics/pageviews", "metrics/bounces",
+    "metrics/bouncerate", "metrics/entries", "metrics/exits", "metrics/orders",
+    "metrics/revenue", "metrics/conversionrate", "metrics/averagetimespentonsite",
+    "metrics/averagetimespentonpage", "metrics/averagevisitdepth", "metrics/units",
+    "metrics/carts", "metrics/cartadditions", "metrics/cartremovals", "metrics/cartviews",
+    "metrics/checkouts", "metrics/occurrences", "metrics/singlepagevisits",
+    "metrics/reloads", "metrics/timespent", "metrics/campaigninstances",
+    "metrics/clickthroughs", "metrics/event1", "metrics/event2", "metrics/event3",
+    "metrics/event4", "metrics/event5", "metrics/event6", "metrics/event7",
+    "metrics/event8", "metrics/event9", "metrics/event10"
 ]
 
 DIMENSIONS = [
-    "variables/page",
-    "variables/pagename",
-    "variables/pageurl",
-    "variables/sitesection",
-    "variables/referrer",
-    "variables/referrertype",
-    "variables/referringdomain",
-    "variables/campaign",
-    "variables/geocountry",
-    "variables/georegion",
-    "variables/geocity",
-    "variables/browser",
-    "variables/browsertype",
-    "variables/operatingsystem",
-    "variables/mobiledevicetype",
-    "variables/mobiledevicename",
-    "variables/marketingchannel",
-    "variables/marketingchanneldetail",
-    "variables/daterangemonth",
-    "variables/daterangeweek",
-    "variables/daterangeday",
-    "variables/daterangeyear",
-    "variables/daterangequarter",
-    "variables/searchengine",
-    "variables/searchenginekeyword",
-    "variables/entrypage",
-    "variables/exitpage",
-    "variables/language",
-    "variables/visitnumber",
+    "variables/page", "variables/pagename", "variables/pageurl", "variables/sitesection",
+    "variables/referrer", "variables/referrertype", "variables/referringdomain",
+    "variables/campaign", "variables/geocountry", "variables/georegion",
+    "variables/geocity", "variables/browser", "variables/browsertype",
+    "variables/operatingsystem", "variables/mobiledevicetype", "variables/mobiledevicename",
+    "variables/marketingchannel", "variables/marketingchanneldetail",
+    "variables/daterangemonth", "variables/daterangeweek", "variables/daterangeday",
+    "variables/daterangeyear", "variables/daterangequarter", "variables/searchengine",
+    "variables/searchenginekeyword", "variables/entrypage", "variables/exitpage",
+    "variables/language", "variables/visitnumber", "variables/prop1", "variables/prop2",
+    "variables/prop3", "variables/prop4", "variables/prop5", "variables/evar1",
+    "variables/evar2", "variables/evar3", "variables/evar4", "variables/evar5"
 ]
 
-# Token cache with thread safety
 _token_cache = {"token": None, "expires_at": None}
 _token_lock = asyncio.Lock()
 
@@ -151,9 +128,7 @@ async def security_middleware(request: Request, call_next):
 
     if client_host not in allowed_hosts:
         logger.warning(f"Blocked external access attempt from: {client_host}")
-        raise HTTPException(
-            status_code=403, detail="Access forbidden - internal use only"
-        )
+        raise HTTPException(status_code=403, detail="Access forbidden - internal use only")
 
     response = await call_next(request)
     return response
@@ -187,7 +162,6 @@ async def get_access_token() -> str:
             access_token = token_data["access_token"]
             expires_in = token_data.get("expires_in", 3600)
 
-            # Cache token with 5-minute buffer
             _token_cache["token"] = access_token
             _token_cache["expires_at"] = current_time + timedelta(seconds=expires_in - 300)
 
@@ -201,10 +175,7 @@ async def get_access_token() -> str:
             logger.error(f"Failed to get Adobe Analytics access token: {str(e)}")
             raise
 
-def validate_metrics_dimensions(
-    metrics: List[str], dimensions: List[str]
-) -> Dict[str, Any]:
-    """Validate and clean metrics and dimensions"""
+def validate_metrics_dimensions(metrics: List[str], dimensions: List[str]) -> Dict[str, Any]:
     valid_metrics = []
     invalid_metrics = []
 
@@ -212,7 +183,6 @@ def validate_metrics_dimensions(
         if metric in METRICS:
             valid_metrics.append(metric)
         else:
-            # Try fuzzy matching
             metric_clean = metric.replace("metrics/", "").lower()
             for valid_metric in METRICS:
                 if metric_clean in valid_metric.lower():
@@ -228,7 +198,6 @@ def validate_metrics_dimensions(
         if dimension in DIMENSIONS:
             valid_dimensions.append(dimension)
         else:
-            # Try fuzzy matching
             dimension_clean = dimension.replace("variables/", "").lower()
             for valid_dimension in DIMENSIONS:
                 if dimension_clean in valid_dimension.lower():
@@ -244,14 +213,85 @@ def validate_metrics_dimensions(
         "invalid_dimensions": invalid_dimensions,
     }
 
-async def get_analytics_report(
+def build_global_filters(
+    start_date: str,
+    end_date: str,
+    segment_filters: Optional[List[SegmentFilter]] = None,
+    dimension_filters: Optional[List[DimensionFilter]] = None
+) -> List[Dict[str, Any]]:
+    filters = []
+    
+    filters.append({
+        "type": "dateRange",
+        "dateRange": f"{start_date}T00:00:00/{end_date}T23:59:59"
+    })
+    
+    if segment_filters:
+        for segment_filter in segment_filters:
+            filters.append({
+                "type": "segment",
+                "segmentId": segment_filter.segment_id
+            })
+    
+    if dimension_filters:
+        for dim_filter in dimension_filters:
+            filter_obj = {
+                "type": "dimension",
+                "dimension": dim_filter.dimension
+            }
+            
+            if dim_filter.operator == "equals":
+                if len(dim_filter.values) == 1:
+                    filter_obj["itemId"] = dim_filter.values[0]
+                else:
+                    filter_obj["itemIds"] = dim_filter.values
+            elif dim_filter.operator == "contains":
+                filter_obj["search"] = {
+                    "clause": dim_filter.values[0],
+                    "includeSearchTotal": True
+                }
+            elif dim_filter.operator == "starts_with":
+                filter_obj["search"] = {
+                    "clause": f"{dim_filter.values[0]}*",
+                    "includeSearchTotal": True
+                }
+            elif dim_filter.operator == "ends_with":
+                filter_obj["search"] = {
+                    "clause": f"*{dim_filter.values[0]}",
+                    "includeSearchTotal": True
+                }
+            elif dim_filter.operator == "not_equals":
+                filter_obj["excludeItemIds"] = dim_filter.values
+            
+            filters.append(filter_obj)
+    
+    return filters
+
+def build_breakdown_structure(dimensions: List[str]) -> Optional[Dict[str, Any]]:
+    if len(dimensions) <= 1:
+        return None
+    
+    breakdown = {
+        "dimension": dimensions[1],
+        "itemId": "*"
+    }
+    
+    if len(dimensions) > 2:
+        breakdown["breakdown"] = build_breakdown_structure(dimensions[1:])
+    
+    return breakdown
+
+async def get_complex_analytics_report(
     metrics: List[str],
     dimensions: List[str],
     start_date: str,
     end_date: str,
+    segment_filters: Optional[List[SegmentFilter]] = None,
+    dimension_filters: Optional[List[DimensionFilter]] = None,
     limit: int = 20,
+    sort_metric: Optional[str] = None,
+    sort_direction: str = "desc"
 ) -> Dict[str, Any]:
-    """Get analytics report from Adobe Analytics API"""
     try:
         validation = validate_metrics_dimensions(metrics, dimensions)
         clean_metrics = validation["valid_metrics"]
@@ -271,46 +311,45 @@ async def get_analytics_report(
 
         metric_entries = []
         for idx, metric in enumerate(clean_metrics):
-            metric_entries.append({"columnId": str(idx), "id": metric})
+            metric_entry = {"columnId": str(idx), "id": metric}
+            if sort_metric and metric == sort_metric:
+                metric_entry["sort"] = sort_direction
+            metric_entries.append(metric_entry)
 
-        primary_dimension = clean_dimensions[0]
+        global_filters = build_global_filters(
+            start_date, end_date, segment_filters, dimension_filters
+        )
 
         body = {
             "rsid": REPORTSUIT_ID,
-            "globalFilters": [
-                {
-                    "type": "dateRange",
-                    "dateRange": f"{start_date}T00:00:00/{end_date}T23:59:59",
-                }
-            ],
+            "globalFilters": global_filters,
             "metricContainer": {"metrics": metric_entries},
-            "dimension": primary_dimension,
+            "dimension": clean_dimensions[0],
             "settings": {
-                "limit": min(limit, 50),
+                "limit": min(limit, 400),
                 "page": 0,
                 "dimensionSort": "asc",
                 "countRepeatInstances": True,
+                "includeLatLong": False,
+                "includeAnomalyDetection": False
             },
         }
 
-        # Add breakdown dimension if available
-        if len(clean_dimensions) > 1:
+        breakdown = build_breakdown_structure(clean_dimensions)
+        if breakdown:
             body["metricContainer"]["metricFilters"] = [
                 {
                     "id": "0",
                     "type": "breakdown",
-                    "dimension": clean_dimensions[1],
-                    "itemId": "*",
+                    **breakdown
                 }
             ]
 
         url = f"https://analytics.adobe.io/api/{COMPANY_ID}/reports"
 
-        logger.info(
-            f"Adobe Analytics request: {len(clean_metrics)} metrics, {len(clean_dimensions)} dimensions"
-        )
+        logger.info(f"Complex Adobe Analytics request: {len(clean_metrics)} metrics, {len(clean_dimensions)} dimensions, {len(global_filters)} filters")
         
-        async with httpx.AsyncClient(timeout=45) as client:
+        async with httpx.AsyncClient(timeout=60) as client:
             res = await client.post(url, headers=headers, json=body)
         res.raise_for_status()
 
@@ -324,6 +363,10 @@ async def get_analytics_report(
                 "dimensions": clean_dimensions,
                 "date_range": f"{start_date} to {end_date}",
                 "total_rows": len(response_data.get("rows", [])),
+                "filters_applied": {
+                    "segments": len(segment_filters) if segment_filters else 0,
+                    "dimensions": len(dimension_filters) if dimension_filters else 0
+                },
                 "server_type": "mcp_adobe_analytics",
                 "validation": validation,
             },
@@ -344,18 +387,124 @@ async def get_analytics_report(
             "error": f"Unexpected error: {str(e)}",
             "error_type": "internal_error",
         }
-        logger.error(f"Unexpected error in get_analytics_report: {error_details}")
+        logger.error(f"Unexpected error in get_complex_analytics_report: {error_details}")
         return error_details
 
+async def get_analytics_report(
+    metrics: List[str],
+    dimensions: List[str],
+    start_date: str,
+    end_date: str,
+    limit: int = 20,
+) -> Dict[str, Any]:
+    return await get_complex_analytics_report(
+        metrics=metrics,
+        dimensions=dimensions,
+        start_date=start_date,
+        end_date=end_date,
+        limit=limit
+    )
+
+async def get_segments_list() -> Dict[str, Any]:
+    try:
+        headers = {
+            "Accept": "application/json",
+            "x-gw-ims-org-id": ORG_ID,
+            "x-proxy-global-company-id": COMPANY_ID,
+            "x-api-key": CLIENT_ID,
+            "Authorization": f"Bearer {await get_access_token()}",
+        }
+
+        url = f"https://analytics.adobe.io/api/{COMPANY_ID}/segments"
+        params = {
+            "rsids": REPORTSUIT_ID,
+            "limit": 100,
+            "includeType": "all"
+        }
+
+        async with httpx.AsyncClient(timeout=30) as client:
+            res = await client.get(url, headers=headers, params=params)
+        res.raise_for_status()
+
+        response_data = res.json()
+
+        return {
+            "success": True,
+            "segments": response_data.get("content", []),
+            "total_segments": response_data.get("totalElements", 0),
+            "server_type": "mcp_adobe_analytics"
+        }
+
+    except Exception as e:
+        logger.error(f"Error getting segments list: {str(e)}")
+        return {
+            "success": False,
+            "error": str(e),
+            "error_type": "segments_error"
+        }
+
+async def get_dimension_values(
+    dimension: str,
+    search_term: Optional[str] = None,
+    limit: int = 50
+) -> Dict[str, Any]:
+    try:
+        headers = {
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "x-gw-ims-org-id": ORG_ID,
+            "x-proxy-global-company-id": COMPANY_ID,
+            "x-api-key": CLIENT_ID,
+            "Authorization": f"Bearer {await get_access_token()}",
+        }
+
+        body = {
+            "rsid": REPORTSUIT_ID,
+            "dimension": dimension,
+            "settings": {
+                "limit": min(limit, 50000),
+                "page": 0
+            }
+        }
+
+        if search_term:
+            body["search"] = {
+                "clause": search_term,
+                "includeSearchTotal": True
+            }
+
+        url = f"https://analytics.adobe.io/api/{COMPANY_ID}/reports/dimensionValues"
+
+        async with httpx.AsyncClient(timeout=30) as client:
+            res = await client.post(url, headers=headers, json=body)
+        res.raise_for_status()
+
+        response_data = res.json()
+
+        return {
+            "success": True,
+            "dimension": dimension,
+            "values": response_data.get("rows", []),
+            "total_values": len(response_data.get("rows", [])),
+            "search_term": search_term,
+            "server_type": "mcp_adobe_analytics"
+        }
+
+    except Exception as e:
+        logger.error(f"Error getting dimension values: {str(e)}")
+        return {
+            "success": False,
+            "error": str(e),
+            "error_type": "dimension_values_error"
+        }
+
 def parse_time_period(time_period: str, current_date: str) -> tuple[str, str]:
-    """Parse time period string into start and end dates"""
     try:
         current = datetime.fromisoformat(current_date)
     except ValueError:
         logger.warning(f"Invalid current_date format: {current_date}, using today")
         current = datetime.now()
 
-    # Handle specific month format (e.g., "november_2024")
     if "_" in time_period and any(
         month in time_period.lower()
         for month in [
@@ -379,11 +528,8 @@ def parse_time_period(time_period: str, current_date: str) -> tuple[str, str]:
 
             return first_day.strftime("%Y-%m-%d"), last_day.strftime("%Y-%m-%d")
         except (ValueError, KeyError) as e:
-            logger.warning(
-                f"Could not parse specific month format: {time_period}, error: {e}"
-            )
+            logger.warning(f"Could not parse specific month format: {time_period}, error: {e}")
 
-    # Handle relative time periods
     if "current_month" in time_period.lower() or "this month" in time_period.lower():
         first_day = current.replace(day=1)
         last_day = current.replace(
@@ -396,9 +542,7 @@ def parse_time_period(time_period: str, current_date: str) -> tuple[str, str]:
         last_of_previous = first_of_current - timedelta(days=1)
         first_of_previous = last_of_previous.replace(day=1)
 
-        return first_of_previous.strftime("%Y-%m-%d"), last_of_previous.strftime(
-            "%Y-%m-%d"
-        )
+        return first_of_previous.strftime("%Y-%m-%d"), last_of_previous.strftime("%Y-%m-%d")
 
     if "yesterday" in time_period.lower():
         date_obj = current - timedelta(days=1)
@@ -416,11 +560,9 @@ def parse_time_period(time_period: str, current_date: str) -> tuple[str, str]:
         start_date = end_date - timedelta(days=89)
         return start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d")
     else:
-        # Default to yesterday
         date_obj = current - timedelta(days=1)
         return date_obj.strftime("%Y-%m-%d"), date_obj.strftime("%Y-%m-%d")
 
-# Define available MCP tools
 MCP_TOOLS = [
     MCPTool(
         name="get_analytics_report",
@@ -449,8 +591,75 @@ MCP_TOOLS = [
                 "limit": {
                     "type": "integer",
                     "default": 20,
-                    "description": "Maximum number of rows to return (max 50)",
+                    "description": "Maximum number of rows to return (max 400)",
                 },
+            },
+            "required": ["metrics", "dimensions", "start_date", "end_date"],
+        },
+    ),
+    MCPTool(
+        name="get_complex_analytics_report",
+        description="Get complex multi-dimensional Adobe Analytics report with segment and dimension filtering",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "metrics": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "List of metrics to retrieve",
+                },
+                "dimensions": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "List of dimensions for multi-level breakdown",
+                },
+                "start_date": {
+                    "type": "string",
+                    "description": "Start date in YYYY-MM-DD format",
+                },
+                "end_date": {
+                    "type": "string",
+                    "description": "End date in YYYY-MM-DD format",
+                },
+                "segment_filters": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "segment_id": {"type": "string"}
+                        },
+                        "required": ["segment_id"]
+                    },
+                    "description": "List of segment filters to apply"
+                },
+                "dimension_filters": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "dimension": {"type": "string"},
+                            "operator": {"type": "string", "enum": ["equals", "contains", "starts_with", "ends_with", "not_equals"]},
+                            "values": {"type": "array", "items": {"type": "string"}}
+                        },
+                        "required": ["dimension", "operator", "values"]
+                    },
+                    "description": "List of dimension filters to apply"
+                },
+                "limit": {
+                    "type": "integer",
+                    "default": 20,
+                    "description": "Maximum number of rows to return (max 400)",
+                },
+                "sort_metric": {
+                    "type": "string",
+                    "description": "Metric to sort by"
+                },
+                "sort_direction": {
+                    "type": "string",
+                    "enum": ["asc", "desc"],
+                    "default": "desc",
+                    "description": "Sort direction"
+                }
             },
             "required": ["metrics", "dimensions", "start_date", "end_date"],
         },
@@ -504,6 +713,38 @@ MCP_TOOLS = [
         },
     ),
     MCPTool(
+        name="get_segments_list",
+        description="Get list of available Adobe Analytics segments",
+        input_schema={
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+    ),
+    MCPTool(
+        name="get_dimension_values",
+        description="Get available values for a specific dimension",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "dimension": {
+                    "type": "string",
+                    "description": "Dimension to get values for",
+                },
+                "search_term": {
+                    "type": "string",
+                    "description": "Optional search term to filter values",
+                },
+                "limit": {
+                    "type": "integer",
+                    "default": 50,
+                    "description": "Maximum number of values to return",
+                },
+            },
+            "required": ["dimension"],
+        },
+    ),
+    MCPTool(
         name="validate_schema",
         description="Validate metrics and dimensions against Adobe Analytics schema",
         input_schema={
@@ -532,7 +773,6 @@ MCP_TOOLS = [
 
 @app.post("/mcp")
 async def handle_mcp_request(request: MCPRequest) -> MCPResponse:
-    """Handle MCP protocol requests"""
     try:
         logger.info(f"MCP request: {request.method}")
 
@@ -576,6 +816,51 @@ async def handle_mcp_request(request: MCPRequest) -> MCPResponse:
                     id=request.id,
                 )
 
+            elif tool_name == "get_complex_analytics_report":
+                required_args = ["metrics", "dimensions", "start_date", "end_date"]
+                missing_args = [arg for arg in required_args if arg not in arguments]
+                if missing_args:
+                    return MCPResponse(
+                        error={
+                            "code": -32602,
+                            "message": f"Missing required arguments: {missing_args}",
+                        },
+                        id=request.id,
+                    )
+
+                segment_filters = None
+                if arguments.get("segment_filters"):
+                    segment_filters = [
+                        SegmentFilter(**sf) for sf in arguments["segment_filters"]
+                    ]
+
+                dimension_filters = None
+                if arguments.get("dimension_filters"):
+                    dimension_filters = [
+                        DimensionFilter(**df) for df in arguments["dimension_filters"]
+                    ]
+
+                result = await get_complex_analytics_report(
+                    metrics=arguments["metrics"],
+                    dimensions=arguments["dimensions"],
+                    start_date=arguments["start_date"],
+                    end_date=arguments["end_date"],
+                    segment_filters=segment_filters,
+                    dimension_filters=dimension_filters,
+                    limit=arguments.get("limit", 20),
+                    sort_metric=arguments.get("sort_metric"),
+                    sort_direction=arguments.get("sort_direction", "desc")
+                )
+
+                return MCPResponse(
+                    result={
+                        "content": [
+                            {"type": "text", "text": json.dumps(result, indent=2)}
+                        ]
+                    },
+                    id=request.id,
+                )
+
             elif tool_name == "get_comparison_report":
                 required_args = [
                     "metrics",
@@ -595,7 +880,6 @@ async def handle_mcp_request(request: MCPRequest) -> MCPResponse:
                         id=request.id,
                     )
 
-                # Get both reports
                 primary_result = await get_analytics_report(
                     metrics=arguments["metrics"],
                     dimensions=arguments["dimensions"],
@@ -623,6 +907,45 @@ async def handle_mcp_request(request: MCPRequest) -> MCPResponse:
                         "server_type": "mcp_adobe_analytics",
                     },
                 }
+
+                return MCPResponse(
+                    result={
+                        "content": [
+                            {"type": "text", "text": json.dumps(result, indent=2)}
+                        ]
+                    },
+                    id=request.id,
+                )
+
+            elif tool_name == "get_segments_list":
+                result = await get_segments_list()
+
+                return MCPResponse(
+                    result={
+                        "content": [
+                            {"type": "text", "text": json.dumps(result, indent=2)}
+                        ]
+                    },
+                    id=request.id,
+                )
+
+            elif tool_name == "get_dimension_values":
+                required_args = ["dimension"]
+                missing_args = [arg for arg in required_args if arg not in arguments]
+                if missing_args:
+                    return MCPResponse(
+                        error={
+                            "code": -32602,
+                            "message": f"Missing required arguments: {missing_args}",
+                        },
+                        id=request.id,
+                    )
+
+                result = await get_dimension_values(
+                    dimension=arguments["dimension"],
+                    search_term=arguments.get("search_term"),
+                    limit=arguments.get("limit", 50)
+                )
 
                 return MCPResponse(
                     result={
@@ -715,7 +1038,6 @@ async def handle_mcp_request(request: MCPRequest) -> MCPResponse:
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint"""
     try:
         token = await get_access_token()
         adobe_status = "connected" if token else "disconnected"
@@ -736,7 +1058,6 @@ async def health_check():
 
 @app.get("/tools")
 async def list_tools():
-    """List available tools endpoint"""
     return {
         "tools": [tool.dict() for tool in MCP_TOOLS],
         "server_type": "mcp_adobe_analytics",
@@ -745,7 +1066,6 @@ async def list_tools():
 
 @app.on_event("startup")
 async def startup_event():
-    """Startup event handler"""
     logger.info("Starting Adobe Analytics MCP Server")
 
     try:
