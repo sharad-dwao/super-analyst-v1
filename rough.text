@@ -1,13 +1,37 @@
-If the user asks for:
-- A time range spanning several months (e.g., "June 2024 through May 2025")
-- And wants **individual month visit counts**, **monthly trend**, or **monthly breakdown**
-
-Then:
-- Set `time_period` to the full range (e.g., "june_2024_to_may_2025")
-- Use `variables/daterangemonth` as a dimension
-- Set `analysis_type` to "time_series"
-- Ensure the tool returns **month-by-month values** across the period
-
-Do NOT treat this as a single aggregate period — break it down by month as the user requested.
-
-
+[1] 2025-06-30 15:38:28 [INFO] Stage 2: Retrieving analytics data via MCP
+[1] 2025-06-30 15:38:28 [INFO] enhanced query is here :>>>>>>>>enhanced_query='Provide a month-by-month traffic trend report showing total visits for each month from July 1, 2024 to June 30, 2025.' intent='Analyze monthly traffic trends over the last full year' metrics=['metrics/visits'] dimensions=['variables/daterangemonth'] time_period='2024-07-01_to_2025-06-30' comparison_period='' output_format='table' additional_context='The last year is interpreted as the 12 full months preceding and including June 2025, using monthly granularity to show trends month-by-month.'
+[1] 2025-06-30 15:38:28 [INFO] Calling MCP tool: get_current_date
+[2] 2025-06-30 15:38:29 [INFO] MCP request: tools/call
+[2] INFO:     127.0.0.1:60867 - "POST /mcp HTTP/1.1" 200 OK
+[2] 2025-06-30 15:38:29 [INFO] Calling tool: get_current_date
+[1] 2025-06-30 15:38:29 [INFO] HTTP Request: POST http://localhost:8001/mcp "HTTP/1.1 200 OK"  
+[1] 2025-06-30 15:38:29 [WARNING] Failed to parse tool result as JSON: Extra data: line 1 column 5 (char 4)
+[1] 2025-06-30 15:38:29 [INFO] Calling MCP tool: validate_schema
+[2] 2025-06-30 15:38:29 [INFO] MCP request: tools/call
+[2] INFO:     127.0.0.1:60867 - "POST /mcp HTTP/1.1" 200 OK
+[2] 2025-06-30 15:38:29 [INFO] Calling tool: validate_schema
+[1] 2025-06-30 15:38:29 [INFO] HTTP Request: POST http://localhost:8001/mcp "HTTP/1.1 200 OK"  
+[1] 2025-06-30 15:38:29 [INFO] Tool validate_schema executed successfully
+[1] 2025-06-30 15:38:29 [INFO] MCP single period query: 2025-06-29 to 2025-06-29
+[1] 2025-06-30 15:38:29 [INFO] Calling MCP tool: get_analytics_report
+[2] 2025-06-30 15:38:29 [INFO] MCP request: tools/call
+[2] 2025-06-30 15:38:29 [INFO] Calling tool: get_analytics_report
+[2] 2025-06-30 15:38:29 [INFO] Adobe Analytics request: 1 metrics, 1 dimensions
+[2] 2025-06-30 15:38:31 [INFO] HTTP Request: POST https://analytics.adobe.io/api/digita95/reports "HTTP/1.1 200 OK"
+[2] INFO:     127.0.0.1:60867 - "POST /mcp HTTP/1.1" 200 OK
+[1] 2025-06-30 15:38:31 [INFO] HTTP Request: POST http://localhost:8001/mcp "HTTP/1.1 200 OK"  
+[1] 2025-06-30 15:38:31 [INFO] Tool get_analytics_report executed successfully
+[1] 2025-06-30 15:38:31 [INFO] Stage 3: Analyzing data and generating insights
+[1] 2025-06-30 15:38:31 [INFO] HTTP Request: POST https://openrouter.ai/api/v1/chat/completions "HTTP/1.1 200 OK"
+[1] 2025-06-30 15:38:38 [INFO] Query processing completed successfully
+[1] 2025-06-30 15:38:38 [INFO] MCP analysis completed successfully
+[1] 2025-06-30 15:38:38 [INFO] Tool analyze_with_mcp completed successfully
+[1] 2025-06-30 15:38:38 [INFO] Received chat request with 2 messages
+[1] 2025-06-30 15:38:38 [INFO] Processing 4 messages with current date: 2025-06-30
+[1] INFO:     ::ffff:127.0.0.1:0 - "POST /api/chat HTTP/1.1" 200 OK
+[1] 2025-06-30 15:38:38 [INFO] Starting stream with 4 messages
+[1] 2025-06-30 15:38:38 [INFO] HTTP Request: POST https://openrouter.ai/api/v1/chat/completions "HTTP/1.1 200 OK"
+[2] 2025-06-30 15:38:51 [INFO] 1 change detected
+[2] 2025-06-30 15:39:06 [INFO] 21 changes detected
+[2] 2025-06-30 15:39:07 [INFO] 14 changes detected
+[2]

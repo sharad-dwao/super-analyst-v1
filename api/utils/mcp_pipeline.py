@@ -508,6 +508,7 @@ Respond with valid JSON only, no additional text or formatting."""
         self, enhanced_query: AnalyticsQuery
     ) -> Dict[str, Any]:
         try:
+            logger.info(f"enhanced query is here :>>>>>>>>{enhanced_query}")
             date_result = await asyncio.wait_for(
                 self.mcp_client.get_current_date(), timeout=10.0
             )
@@ -764,12 +765,49 @@ CRITICAL: User requested "{output_format}" format - adapt your response accordin
     ) -> tuple[str, str]:
         from datetime import datetime, timedelta
         import calendar
+        import re
 
         try:
             current = datetime.fromisoformat(current_date)
         except ValueError:
             logger.warning(f"Invalid current_date format: {current_date}, using today")
             current = datetime.now()
+
+
+        month_map = {
+            "january": 1,
+            "february": 2,
+            "march": 3,
+            "april": 4,
+            "may": 5,
+            "june": 6,
+            "july": 7,
+            "august": 8,
+            "september": 9,
+            "october": 10,
+            "november": 11,
+            "december": 12,
+        }
+
+        if "_to_" in time_period and re.match(r"\d{4}-\d{2}-\d{2}_to_\d{4}-\d{2}-\d{2}", time_period):
+            start_date, end_date = time_period.split("_to_")
+            return start_date, end_date
+        
+
+        if "_to_" in time_period and any(month in time_period.lower() for month in month_map):
+            try:
+                def parse_month_year(part: str) -> datetime:
+                    month_name, year = part.strip().lower().split("_")
+                    return datetime(int(year), month_map[month_name], 1)
+
+                start_part, end_part = time_period.lower().split("_to_")
+                start_dt = parse_month_year(start_part)
+                end_dt = parse_month_year(end_part)
+                end_dt = end_dt.replace(day=calendar.monthrange(end_dt.year, end_dt.month)[1])
+
+                return start_dt.strftime("%Y-%m-%d"), end_dt.strftime("%Y-%m-%d")
+            except Exception as e:
+                logger.warning(f"Could not parse named month range '{time_period}': {e}")
 
         if "_" in time_period and any(
             month in time_period.lower()
