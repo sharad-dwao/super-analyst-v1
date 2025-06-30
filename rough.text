@@ -1,0 +1,13 @@
+If the user asks for:
+- A time range spanning several months (e.g., "June 2024 through May 2025")
+- And wants **individual month visit counts**, **monthly trend**, or **monthly breakdown**
+
+Then:
+- Set `time_period` to the full range (e.g., "june_2024_to_may_2025")
+- Use `variables/daterangemonth` as a dimension
+- Set `analysis_type` to "time_series"
+- Ensure the tool returns **month-by-month values** across the period
+
+Do NOT treat this as a single aggregate period — break it down by month as the user requested.
+
+
